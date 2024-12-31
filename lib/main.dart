@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io' show File;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -6,7 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:ollama_dart/ollama_dart.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
-
+import 'package:http/http.dart' as http;
 // ----------------- HIVE imports --------------------
 import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -15,7 +16,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 // 1) SettingsProvider & ThemeProvider
 // --------------------------------------------------
 class SettingsProvider extends ChangeNotifier {
-  String _ollamaServerURI = 'http://localhost:11434'; // default value
+  String _ollamaServerURI = 'http://xyz:11434'; // default value
   String get ollamaServerURI => _ollamaServerURI;
   set ollamaServerURI(String val) {
     _ollamaServerURI = val;
@@ -103,7 +104,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   String _defaultModel = ''; // default selection
 
   // The list of all AI model options
-  final List<String> _modelOptions = [];
+  late List<String> _modelOptions = [];
 
   late OllamaClient client;
   late OllamaClient clientModel;
@@ -127,49 +128,12 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
     client = OllamaClient(baseUrl: settingsProvider.ollamaServerURI);
     clientModel = OllamaClient(baseUrl: '${settingsProvider.ollamaServerURI}/api');
-    
-    // 3) (Optionally) refresh the model list from the server
-    _listModels(client);
   }
   
   Future<void> clearHiveBox() async {
   final box = Hive.box('settings'); // Replace 'settings' with your box name
   await box.clear();
   print('Hive box cleared!');
-}
-
-  Future<void> _listModels(final OllamaClient client) async {
-    print('Listing models...');
-    final res = await clientModel.listModels().catchError((e) {
-      _isModelListPossible = false;
-      print('Error listing models: $e');
-    });
-
-    // Safely handle a null or empty result
-    if (res.models == null) {
-      _isModelListPossible = false;
-      return;
-    }
-
-    setState(() {
-      _modelOptions.clear();
-      for (final m in res.models!) {
-        _isModelListPossible = true;
-        print(m.model);
-        if (m.model != null) {
-          _modelOptions.add(m.model!);
-        }
-      }
-      if (_modelOptions.isNotEmpty) {
-        _defaultModel = _modelOptions[0];
-      }
-    });
-
-    // Save updated values in Hive
-    final box = Hive.box('settings');
-    await box.put('modelOptions', _modelOptions);
-    await box.put('defaultModel', _defaultModel);
-    await box.put('systemPrompt', _systemPrompt);
   }
 
   // --------------------------------------------------
@@ -322,7 +286,6 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 // Save the server URI to the provider
                                 settingsProvider.ollamaServerURI =
                                     serverUriController.text;
-
                                 setState(() {
                                   _systemPrompt = systemPromptController.text;
                                   _defaultModel = tempSelectedModel;
@@ -330,11 +293,10 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                     baseUrl:
                                         '${settingsProvider.ollamaServerURI}/api',
                                   );
-                                 
                                 });
                                 // Update theme
                                 themeProvider.isLightMode = tempIsLightMode;
-
+                                fetchTags(serverUriController.text);
                                 // ---------- SAVE to HIVE ----------
                                 final box = Hive.box('settings');
                                 await box.put('modelOptions', _modelOptions);
@@ -532,6 +494,53 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     }
     _controller.clear();
   }
+
+   Future<void> fetchTags(String url) async {
+  print(url);
+    final Uri uri = Uri.parse('$url/api/tags');
+
+    try {
+      final response = await http.get(
+        uri,
+        headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json' ,
+        'ngrok-skip-browser-warning': 'fuck',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST',
+        "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+        },
+      );
+
+      if (response.statusCode == 200) {
+        print(json.decode(response.body));
+        Map<String, dynamic> jsonData = json.decode(response.body);
+        List<dynamic> models = jsonData['models'];
+        List<String> modelNames = models.map((model) => model['name'] as String).toList();
+        print(modelNames);
+        _modelOptions = modelNames;
+        setState(() {
+        _isModelListPossible = true;
+        print(_modelOptions);
+        });
+
+            }
+      else{
+        print("error");
+      }
+    } catch (e) {
+      setState(() {
+      
+      });
+
+          // Save updated values in Hive
+    final box = Hive.box('settings');
+    await box.put('modelOptions', _modelOptions);
+    await box.put('defaultModel', _defaultModel);
+    await box.put('systemPrompt', _systemPrompt);
+    }
+  }
+
 
   // --------------------------------------------------
   // 3D) Show popup of image upload options
