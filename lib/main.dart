@@ -1,13 +1,17 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show File;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ollama_dart/ollama_dart.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
+import 'package:markdown/markdown.dart' as md;
 // ----------------- HIVE imports --------------------
 import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -16,13 +20,19 @@ import 'package:hive_flutter/hive_flutter.dart';
 // 1) SettingsProvider & ThemeProvider
 // --------------------------------------------------
 class SettingsProvider extends ChangeNotifier {
-  String _ollamaServerURI = 'http://xyz:11434'; // default value
+  String _ollamaServerURI;
+
+  SettingsProvider({required String initialOllamaServerURI})
+      : _ollamaServerURI = initialOllamaServerURI;
+
   String get ollamaServerURI => _ollamaServerURI;
+
   set ollamaServerURI(String val) {
     _ollamaServerURI = val;
     notifyListeners();
   }
 }
+
 
 class ThemeProvider extends ChangeNotifier {
   bool _isLightMode = true; // default is light mode
@@ -56,13 +66,20 @@ void main() async {
   // Initialize HIVE
   await Hive.initFlutter();
   // Open a box for storing settings
-  await Hive.openBox('settings');
+  final box = await Hive.openBox('settings');
+
+  // Pull whatever was last saved, or fallback to a default
+  final savedServerURI = box.get('serverURI', defaultValue: 'http://xyz:11434');
 
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
-        ChangeNotifierProvider(create: (_) => SettingsProvider()),
+        ChangeNotifierProvider(
+          create: (_) => SettingsProvider(
+            initialOllamaServerURI: savedServerURI,
+          ),
+        ),
       ],
       child: MyApp(),
     ),
@@ -99,6 +116,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   final List<ChatMessage> _messages = [];
   bool _isLoading = false;
   // User-configurable settings
+  String serverURI = '';
   String _systemPrompt = '';
   String _defaultModel = ''; // default selection
 
@@ -117,11 +135,13 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     final savedModelOptions = box.get('modelOptions', defaultValue: []);
     final savedDefaultModel = box.get('defaultModel', defaultValue: '');
     final savedSystemPrompt = box.get('systemPrompt', defaultValue: '');
+    final savedServerURI = box.get('serverURI', defaultValue: '');
 
     // Make sure we cast appropriately
     _modelOptions.addAll((savedModelOptions as List).cast<String>());
     _defaultModel = savedDefaultModel;
     _systemPrompt = savedSystemPrompt;
+    serverURI = savedServerURI;
 
     // 2) Then set up the Ollama clients
     final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
@@ -285,6 +305,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 // Save the server URI to the provider
                                 settingsProvider.ollamaServerURI =
                                     serverUriController.text;
+                                settingsProvider.ollamaServerURI = serverUriController.text; 
+                                
                                 setState(() {
                                   _systemPrompt = systemPromptController.text;
                                   _defaultModel = tempSelectedModel;
@@ -302,7 +324,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 await box.put('modelOptions', _modelOptions);
                                 await box.put('defaultModel', _defaultModel);
                                 await box.put('systemPrompt', _systemPrompt);
-
+                                await box.put('serverURI', serverUriController.text);
                                 Navigator.of(context).pop();
                               },
                               child: Text(
@@ -540,6 +562,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     await box.put('modelOptions', _modelOptions);
     await box.put('defaultModel', _defaultModel);
     await box.put('systemPrompt', _systemPrompt);
+    await box.put('serverURI', serverURI);
     }
   }
 
@@ -791,7 +814,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
 }
 
 // --------------------------------------------------
-// 5) ChatMessage (text is not final!)
+// 1) ChatMessage model
 // --------------------------------------------------
 class ChatMessage {
   String text;
@@ -806,7 +829,97 @@ class ChatMessage {
 }
 
 // --------------------------------------------------
-// 6) ChatBubble
+// 2) Custom CopyCodeIcon widget (Stateful)
+// --------------------------------------------------
+class CopyCodeIcon extends StatefulWidget {
+  final String codeText;
+
+  const CopyCodeIcon({super.key, required this.codeText});
+
+  @override
+  State<CopyCodeIcon> createState() => _CopyCodeIconState();
+}
+
+class _CopyCodeIconState extends State<CopyCodeIcon> {
+  bool _copied = false;
+  Timer? _timer;
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _copyText() async {
+    // Copy text to clipboard
+    await Clipboard.setData(ClipboardData(text: widget.codeText));
+
+    // Update icon state to "copied"
+    setState(() {
+      _copied = true;
+    });
+
+    // Revert icon back to "copy" after 5 seconds
+    _timer = Timer(const Duration(seconds: 5), () {
+      setState(() {
+        _copied = false;
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      icon: Icon(
+        _copied ? Icons.check : Icons.copy,
+        color: Colors.black,
+      ),
+      onPressed: _copyText,
+      tooltip: _copied ? 'Copied!' : 'Copy code',
+    );
+  }
+}
+
+// --------------------------------------------------
+// 3) Custom CodeBlockBuilder
+// --------------------------------------------------
+class CodeBlockBuilder extends MarkdownElementBuilder {
+  @override
+  Widget? visitElementAfter(md.Element element, TextStyle? preferredStyle) {
+    final codeText = element.textContent;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Stack(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12.0),
+            child: SelectableText(
+              codeText,
+              style: const TextStyle(
+                color: Colors.white,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ),
+          // Original “copy” button replaced with our new Stateful widget
+          Positioned(
+            top: 0,
+            right: 0,
+            child: CopyCodeIcon(codeText: codeText,),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// --------------------------------------------------
+// 4) ChatBubble widget
 // --------------------------------------------------
 class ChatBubble extends StatelessWidget {
   final ChatMessage message;
@@ -823,7 +936,6 @@ class ChatBubble extends StatelessWidget {
     final bgColor = message.isUser ? userBgColor : botBgColor;
     final textColor = isLight ? Colors.black : Colors.white;
 
-    // If we have imageData, show it, otherwise show text
     Widget contentWidget;
     if (message.imageData != null) {
       contentWidget = SizedBox(
@@ -835,9 +947,21 @@ class ChatBubble extends StatelessWidget {
         ),
       );
     } else {
-      contentWidget = Text(
-        message.text.trim(),
-        style: TextStyle(color: textColor),
+      contentWidget = MarkdownBody(
+        data: message.text.trim(),
+        styleSheet: MarkdownStyleSheet(
+          p: TextStyle(color: textColor),
+          codeblockDecoration: const BoxDecoration(),
+          code: TextStyle(color: textColor, fontFamily: 'monospace'),
+        ),
+        builders: {
+  'blockquote': CodeBlockBuilder(),
+},
+        onTapLink: (text, href, title) {
+          if (href != null) {
+            // Implement any link handling if needed
+          }
+        },
       );
     }
 
