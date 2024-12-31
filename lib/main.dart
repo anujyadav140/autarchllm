@@ -98,7 +98,6 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   final _controller = TextEditingController();
   final List<ChatMessage> _messages = [];
   bool _isLoading = false;
-
   // User-configurable settings
   String _systemPrompt = '';
   String _defaultModel = ''; // default selection
@@ -297,6 +296,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 // Update theme
                                 themeProvider.isLightMode = tempIsLightMode;
                                 fetchTags(serverUriController.text);
+                                // request(serverUriController.text);
                                 // ---------- SAVE to HIVE ----------
                                 final box = Hive.box('settings');
                                 await box.put('modelOptions', _modelOptions);
@@ -496,7 +496,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   }
 
    Future<void> fetchTags(String url) async {
-  print(url);
+    print(url);
     final Uri uri = Uri.parse('$url/api/tags');
 
     try {
@@ -505,8 +505,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json' ,
-        'ngrok-skip-browser-warning': 'fuck',
-        'Access-Control-Allow-Origin': '*',
+        'ngrok-skip-browser-warning': 'true', 
+        'Access-Control-Allow-Origin': 'https://autarch-llm.web.app/',
         'Access-Control-Allow-Methods': 'GET, POST',
         "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Authorization"
         },
@@ -523,7 +523,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         _isModelListPossible = true;
         print(_modelOptions);
         });
-
+        if (_modelOptions.isNotEmpty) {
+          _defaultModel = _modelOptions[0];
+        }
             }
       else{
         print("error");
