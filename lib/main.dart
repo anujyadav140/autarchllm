@@ -1,11 +1,28 @@
-import 'package:autarchllm/providers.dart';
+import 'dart:io' show File;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:ollama_dart/ollama_dart.dart';
 import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:ollama_dart/ollama_dart.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 
-/// Manages the app’s theme (light/dark).
+// ----------------- HIVE imports --------------------
+import 'package:hive/hive.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+
+// --------------------------------------------------
+// 1) SettingsProvider & ThemeProvider
+// --------------------------------------------------
+class SettingsProvider extends ChangeNotifier {
+  String _ollamaServerURI = 'http://localhost:11434'; // default value
+  String get ollamaServerURI => _ollamaServerURI;
+  set ollamaServerURI(String val) {
+    _ollamaServerURI = val;
+    notifyListeners();
+  }
+}
+
 class ThemeProvider extends ChangeNotifier {
   bool _isLightMode = true; // default is light mode
 
@@ -16,23 +33,30 @@ class ThemeProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Returns the corresponding ThemeData for light or dark mode.
   ThemeData get themeData {
     if (_isLightMode) {
       return ThemeData.light().copyWith(
-        // Customize your light theme here if needed
         scaffoldBackgroundColor: Colors.white,
       );
     } else {
       return ThemeData.dark().copyWith(
-        // Customize your dark theme here if needed
-        scaffoldBackgroundColor: const Color(0xFF1B1B1D), // for that dark look
+        scaffoldBackgroundColor: const Color(0xFF1B1B1D),
       );
     }
   }
 }
 
-void main() {
+// --------------------------------------------------
+// 2) Main Entry
+// --------------------------------------------------
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize HIVE
+  await Hive.initFlutter();
+  // Open a box for storing settings
+  await Hive.openBox('settings');
+
   runApp(
     MultiProvider(
       providers: [
@@ -45,21 +69,25 @@ void main() {
 }
 
 class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
   @override
   Widget build(BuildContext context) {
-    // Listen to the theme provider for changes
     final themeProvider = context.watch<ThemeProvider>();
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Autarch LLM',
       theme: themeProvider.themeData,
-      home: OllamaChatPage(),
+      home: const OllamaChatPage(),
     );
   }
 }
 
+// --------------------------------------------------
+// 3) Chat Page
+// --------------------------------------------------
 class OllamaChatPage extends StatefulWidget {
-  const OllamaChatPage({Key? key}) : super(key: key);
+  const OllamaChatPage({super.key});
 
   @override
   _OllamaChatPageState createState() => _OllamaChatPageState();
@@ -71,38 +99,190 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   bool _isLoading = false;
 
   // User-configurable settings
-  String _ollamaServerURI = 'http://127.0.0.1:11434';
   String _systemPrompt = '';
-  String _defaultModel = 'llama3.2:1b'; // default selection
+  String _defaultModel = ''; // default selection
 
   // The list of all AI model options
-  final List<String> _modelOptions = [
-    'llama3.2:1b',
-    'llama2-7b',
-    'llama2-13b',
-    'llama2-70b',
-    // ...
-  ];
+  final List<String> _modelOptions = [];
 
   late OllamaClient client;
-
+  late OllamaClient clientModel;
+  late bool _isModelListPossible = false;
   @override
   void initState() {
     super.initState();
+
+    // 1) Load from Hive first
+    final box = Hive.box('settings');
+    final savedModelOptions = box.get('modelOptions', defaultValue: []);
+    final savedDefaultModel = box.get('defaultModel', defaultValue: '');
+    final savedSystemPrompt = box.get('systemPrompt', defaultValue: '');
+
+    // Make sure we cast appropriately
+    _modelOptions.addAll((savedModelOptions as List).cast<String>());
+    _defaultModel = savedDefaultModel;
+    _systemPrompt = savedSystemPrompt;
+
+    // 2) Then set up the Ollama clients
     final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
     client = OllamaClient(baseUrl: settingsProvider.ollamaServerURI);
+    clientModel = OllamaClient(baseUrl: '${settingsProvider.ollamaServerURI}/api');
+    
+    // 3) (Optionally) refresh the model list from the server
+    _listModels(client);
+  }
+  
+  Future<void> clearHiveBox() async {
+  final box = Hive.box('settings'); // Replace 'settings' with your box name
+  await box.clear();
+  print('Hive box cleared!');
+}
+
+  Future<void> _listModels(final OllamaClient client) async {
+    print('Listing models...');
+    final res = await clientModel.listModels().catchError((e) {
+      _isModelListPossible = false;
+      print('Error listing models: $e');
+    });
+
+    // Safely handle a null or empty result
+    if (res.models == null) {
+      _isModelListPossible = false;
+      return;
+    }
+
+    setState(() {
+      _modelOptions.clear();
+      for (final m in res.models!) {
+        _isModelListPossible = true;
+        print(m.model);
+        if (m.model != null) {
+          _modelOptions.add(m.model!);
+        }
+      }
+      if (_modelOptions.isNotEmpty) {
+        _defaultModel = _modelOptions[0];
+      }
+    });
+
+    // Save updated values in Hive
+    final box = Hive.box('settings');
+    await box.put('modelOptions', _modelOptions);
+    await box.put('defaultModel', _defaultModel);
+    await box.put('systemPrompt', _systemPrompt);
   }
 
-  /// Open the settings dialog
+  // --------------------------------------------------
+  // 3A) Image/File picking logic
+  // --------------------------------------------------
+  Future<void> _pickImageFromGallery() async {
+    try {
+      final ImagePicker picker = ImagePicker();
+      final XFile? pickedFile =
+          await picker.pickImage(source: ImageSource.gallery);
+
+      if (pickedFile != null) {
+        final bytes = await pickedFile.readAsBytes();
+        setState(() {
+          _messages.add(ChatMessage(
+            text: '',
+            imageData: bytes,
+            isUser: true,
+          ));
+        });
+      }
+    } catch (e) {
+      debugPrint('Error picking image from gallery: $e');
+    }
+  }
+
+  Future<void> _takePhoto() async {
+    if (kIsWeb) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Camera not supported on web')),
+      );
+      return;
+    }
+    try {
+      final picker = ImagePicker();
+      final XFile? photo = await picker.pickImage(source: ImageSource.camera);
+      if (photo != null) {
+        final bytes = await File(photo.path).readAsBytes();
+        setState(() {
+          _messages.add(ChatMessage(
+            text: '',
+            imageData: bytes,
+            isUser: true,
+          ));
+        });
+      }
+    } catch (e) {
+      debugPrint('Error taking photo: $e');
+    }
+  }
+
+  Future<void> _pickFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles();
+      if (result != null && result.files.isNotEmpty) {
+        final pickedFile = result.files.single;
+
+        // If it's an image
+        if (pickedFile.extension != null &&
+            ['png', 'jpg', 'jpeg']
+                .contains(pickedFile.extension!.toLowerCase())) {
+          if (kIsWeb) {
+            final bytes = pickedFile.bytes;
+            if (bytes != null) {
+              setState(() {
+                _messages.add(ChatMessage(
+                  text: '',
+                  imageData: bytes,
+                  isUser: true,
+                ));
+              });
+            }
+          } else {
+            if (pickedFile.path != null) {
+              final file = File(pickedFile.path!);
+              final bytes = await file.readAsBytes();
+              setState(() {
+                _messages.add(ChatMessage(
+                  text: '',
+                  imageData: bytes,
+                  isUser: true,
+                ));
+              });
+            }
+          }
+        } else {
+          // Some other file
+          setState(() {
+            _messages.add(ChatMessage(
+              text: '[Uploaded File: ${pickedFile.name}]',
+              imageData: null,
+              isUser: true,
+            ));
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error picking file: $e');
+    }
+  }
+
+  // --------------------------------------------------
+  // 3B) Settings Dialog
+  // --------------------------------------------------
   Future<void> _openSettingsDialog() async {
     final themeProvider = context.read<ThemeProvider>();
     final settingsProvider = context.read<SettingsProvider>();
+
     final TextEditingController serverUriController =
         TextEditingController(text: settingsProvider.ollamaServerURI);
     final TextEditingController systemPromptController =
         TextEditingController(text: _systemPrompt);
 
-    // Local copy of the model selection & theme mode
     String tempSelectedModel = _defaultModel;
     bool tempIsLightMode = themeProvider.isLightMode;
 
@@ -110,7 +290,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       context: context,
       builder: (BuildContext context) {
         return Dialog(
-          insetPadding: !kIsWeb ? const EdgeInsets.all(0.0) : const EdgeInsets.symmetric(horizontal: 40, vertical: 40),
+          insetPadding: !kIsWeb
+              ? const EdgeInsets.all(0.0)
+              : const EdgeInsets.symmetric(horizontal: 40, vertical: 40),
           child: StatefulBuilder(
             builder: (BuildContext context, setStateDialog) {
               return SizedBox(
@@ -136,15 +318,29 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                               ),
                             ),
                             TextButton(
-                              onPressed: () {
-                                settingsProvider.ollamaServerURI = serverUriController.text;
+                              onPressed: () async {
+                                // Save the server URI to the provider
+                                settingsProvider.ollamaServerURI =
+                                    serverUriController.text;
+
                                 setState(() {
                                   _systemPrompt = systemPromptController.text;
                                   _defaultModel = tempSelectedModel;
-
-                                  client = OllamaClient(baseUrl: '${settingsProvider.ollamaServerURI}/api');
+                                  client = OllamaClient(
+                                    baseUrl:
+                                        '${settingsProvider.ollamaServerURI}/api',
+                                  );
+                                 
                                 });
+                                // Update theme
                                 themeProvider.isLightMode = tempIsLightMode;
+
+                                // ---------- SAVE to HIVE ----------
+                                final box = Hive.box('settings');
+                                await box.put('modelOptions', _modelOptions);
+                                await box.put('defaultModel', _defaultModel);
+                                await box.put('systemPrompt', _systemPrompt);
+
                                 Navigator.of(context).pop();
                               },
                               child: Text(
@@ -174,7 +370,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                         TextField(
                           controller: serverUriController,
                           decoration: const InputDecoration(
-                            labelText: 'Ollama server URI',
+                            labelText:
+                                'Ollama server URI: https://xyz.ngrok-free.app',
                             border: OutlineInputBorder(),
                           ),
                         ),
@@ -203,7 +400,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 ),
                               ],
                             ),
-                            DropdownButton<String>(
+                            _isModelListPossible ? DropdownButton<String>(
                               value: tempSelectedModel,
                               onChanged: (String? newValue) {
                                 if (newValue == null) return;
@@ -217,7 +414,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                   child: Text(modelName),
                                 );
                               }).toList(),
-                            ),
+                            ) : Text('None available'),
                           ],
                         ),
 
@@ -292,11 +489,20 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     );
   }
 
+  // --------------------------------------------------
+  // 3C) Streaming chat (non-final text, so we can append)
+  // --------------------------------------------------
   Future<void> _sendMessage(String messageText) async {
     if (messageText.isEmpty) return;
     setState(() {
       _messages.add(ChatMessage(text: messageText, isUser: true));
       _isLoading = true;
+    });
+
+    // Create an empty botMessage
+    ChatMessage botMessage = ChatMessage(text: '', isUser: false);
+    setState(() {
+      _messages.add(botMessage);
     });
 
     final stream = client.generateCompletionStream(
@@ -308,15 +514,11 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       ),
     );
 
-    ChatMessage botMessage = ChatMessage(text: '', isUser: false);
-    setState(() {
-      _messages.add(botMessage);
-    });
-
     try {
       await for (final res in stream) {
         setState(() {
-          botMessage.text += res.response!;
+          // Append partial tokens here
+          botMessage.text = botMessage.text + (res.response ?? '');
         });
       }
     } catch (e) {
@@ -331,169 +533,302 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     _controller.clear();
   }
 
+  // --------------------------------------------------
+  // 3D) Show popup of image upload options
+  // --------------------------------------------------
+  void _showImageOptionsDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Add Images'),
+          content: SingleChildScrollView(
+            child: ListBody(
+              children: <Widget>[
+                // 1) Upload from gallery
+                ListTile(
+                  leading: const Icon(Icons.image),
+                  title: const Text('Upload Image'),
+                  onTap: () async {
+                    Navigator.of(context).pop();
+                    await _pickImageFromGallery();
+                  },
+                ),
+                // 2) Take Photo (mobile only)
+                if (!kIsWeb)
+                  ListTile(
+                    leading: const Icon(Icons.camera_alt),
+                    title: const Text('Take Photo'),
+                    onTap: () async {
+                      Navigator.of(context).pop();
+                      await _takePhoto();
+                    },
+                  ),
+                // 3) Upload any file
+                ListTile(
+                  leading: const Icon(Icons.attach_file),
+                  title: const Text('Upload File'),
+                  onTap: () async {
+                    Navigator.of(context).pop();
+                    await _pickFile();
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // --------------------------------------------------
+  // 4) Build UI
+  // --------------------------------------------------
   @override
   Widget build(BuildContext context) {
-    // Determine whether we are in Light or Dark mode
     final isLight = context.watch<ThemeProvider>().isLightMode;
 
-    // Pick the colors for the AppBar, border, icons, text accordingly
     final appBarColor = isLight ? Colors.white : Colors.black;
     final iconColor = isLight ? Colors.black : Colors.white;
     final textColor = isLight ? Colors.black : Colors.white;
     final borderColor = isLight ? Colors.black : Colors.white;
 
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: appBarColor,
-        iconTheme: IconThemeData(color: iconColor),
-        // Ensure the title text is correct color
-        title: Text(
-          'Autarch LLM',
-          style: GoogleFonts.roboto(
-            color: textColor,
-            fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
-          ),
-        ),
-        bottomOpacity: 1,
-        shape: LinearBorder.bottom(
-          side: BorderSide(color: borderColor, width: 1.0),
-        ),
-      ),
-      drawer: Drawer(
-        child: Column(
-          children: <Widget>[
-            // Scrollable area
-            Expanded(
-              child: ListView(
-                padding: EdgeInsets.zero,
-                children: <Widget>[
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8.0, left: 8.0),
-                    child: Text(
-                      'Today',
-                      style: GoogleFonts.roboto(
-                        color: textColor, // apply color to text
-                        fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
-                      ),
-                    ),
-                  ),
-                  Divider(),
-                  ListTile(
-                    title: Text('Chat 1', style: TextStyle(color: textColor)),
-                    onTap: () => Navigator.pop(context),
-                  ),
-                  ListTile(
-                    title: Text('Chat 2', style: TextStyle(color: textColor)),
-                    onTap: () => Navigator.pop(context),
-                  ),
-                  ListTile(
-                    title: Text('Chat 3', style: TextStyle(color: textColor)),
-                    onTap: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-            ),
-            Divider(),
-            Container(
-              alignment: Alignment.center,
-              margin: const EdgeInsets.only(bottom: 16.0, right: 16.0),
-              child: TextButton(
-                style: TextButton.styleFrom(
-                  foregroundColor: textColor,
-                  side: BorderSide(color: borderColor, width: 0),
-                  shape: const RoundedRectangleBorder(
-                    borderRadius: BorderRadius.zero, // No border radius
-                  ),
-                ),
-                onPressed: _openSettingsDialog,
-                child: const Text('Settings'),
-              ),
+    return SafeArea(
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: appBarColor,
+          iconTheme: IconThemeData(color: iconColor),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.settings),
+              onPressed: () async {
+    await clearHiveBox();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('All settings have been cleared!')),
+    );
+  },
             ),
           ],
-        ),
-      ),
-      body: Column(
-        children: [
-          // Messages area
-          Expanded(
-            child: Container(
-              // If you want a black (dark) background for the chat area,
-              // rely on the scaffold background for dark mode or override here
-              color: isLight ? Colors.white : const Color(0xFF1B1B1D),
-              child: ListView.builder(
-                padding: const EdgeInsets.all(8.0),
-                itemCount: _messages.length,
-                itemBuilder: (context, index) {
-                  final message = _messages[index];
-                  return ChatBubble(message: message, isLight: isLight);
-                },
-              ),
+          title: Text(
+            'Autarch LLM',
+            style: GoogleFonts.roboto(
+              color: textColor,
+              fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
             ),
           ),
-          if (_isLoading) const LinearProgressIndicator(),
-          // Input area
-          Row(
-            children: [
+          bottomOpacity: 1,
+          shape: LinearBorder.bottom(
+            side: BorderSide(color: borderColor, width: 1.0),
+          ),
+        ),
+        drawer: Drawer(
+          child: Column(
+            children: <Widget>[
+              // Scrollable area
               Expanded(
-                child: TextField(
-                  controller: _controller,
-                  onSubmitted: _sendMessage,
-                  minLines: 1,
-                  maxLines: 3,
-                  textAlignVertical: TextAlignVertical.top,
-                  style: TextStyle(color: textColor),
-                  decoration: InputDecoration(
-                    hintText: 'Write something...',
-                    hintStyle: TextStyle(color: textColor.withOpacity(0.6)),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.zero,
-                      borderSide: BorderSide(color: borderColor, width: 1.0),
+                child: ListView(
+                  padding: EdgeInsets.zero,
+                  children: <Widget>[
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0, left: 8.0),
+                      child: Text(
+                        'Today',
+                        style: GoogleFonts.roboto(
+                          color: textColor,
+                          fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
+                        ),
+                      ),
                     ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.zero,
-                      borderSide: BorderSide(color: borderColor, width: 1.0),
+                    const Divider(),
+                    ListTile(
+                      title: Text('Chat 1', style: TextStyle(color: textColor)),
+                      onTap: () => Navigator.pop(context),
                     ),
-                  ),
+                    ListTile(
+                      title: Text('Chat 2', style: TextStyle(color: textColor)),
+                      onTap: () => Navigator.pop(context),
+                    ),
+                    ListTile(
+                      title: Text('Chat 3', style: TextStyle(color: textColor)),
+                      onTap: () => Navigator.pop(context),
+                    ),
+                  ],
                 ),
               ),
-              IconButton(
-                icon: !_isLoading
-                    ? Icon(Icons.arrow_circle_right_outlined, color: iconColor)
-                    : Icon(Icons.hourglass_top, color: iconColor),
-                onPressed: () => _sendMessage(_controller.text),
-                iconSize: 38,
+              const Divider(),
+              Container(
+                alignment: Alignment.center,
+                margin: const EdgeInsets.only(bottom: 16.0, right: 16.0),
+                child: TextButton(
+                  style: TextButton.styleFrom(
+                    foregroundColor: textColor,
+                    side: BorderSide(color: borderColor, width: 0),
+                    shape: const RoundedRectangleBorder(
+                      borderRadius: BorderRadius.zero,
+                    ),
+                  ),
+                  onPressed: _openSettingsDialog,
+                  child: const Text('Settings'),
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 10),
-        ],
+        ),
+        body: SelectionArea(
+          child: Column(
+            children: [
+              // 1) Messages area
+              Expanded(
+                child: Container(
+                  color: isLight ? Colors.white : const Color(0xFF1B1B1D),
+                  padding: EdgeInsets.only(
+                    left: kIsWeb ? 100.0 : 15.0,
+                    right: kIsWeb ? 100.0 : 15.0,
+                    top: kIsWeb ? 20.0 : 10.0,
+                  ),
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(8.0),
+                    itemCount: _messages.length,
+                    itemBuilder: (context, index) {
+                      final message = _messages[index];
+                      return ChatBubble(message: message, isLight: isLight);
+                    },
+                  ),
+                ),
+              ),
+
+              if (_isLoading) const LinearProgressIndicator(),
+
+              // 2) Bottom input area
+              Padding(
+                padding: EdgeInsets.only(
+                  left: kIsWeb ? 100.0 : 15.0,
+                  right: kIsWeb ? 100.0 : 15.0,
+                  bottom: kIsWeb ? 20.0 : 10.0,
+                ),
+                child: Container(
+                  color: isLight ? Colors.white : Colors.black87,
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      // The expanded Column
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: borderColor),
+                            borderRadius: BorderRadius.circular(8.0),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // The TextField
+                              TextField(
+                                controller: _controller,
+                                onSubmitted: _sendMessage,
+                                minLines: 1,
+                                maxLines: 4,
+                                textAlignVertical: TextAlignVertical.top,
+                                style: TextStyle(color: textColor),
+                                decoration: InputDecoration(
+                                  hintText: 'Write something...',
+                                  hintStyle:
+                                      TextStyle(color: textColor.withOpacity(0.6)),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+
+                              // Row of attach vs. send
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  // Attach files/images
+                                  IconButton(
+                                    icon: Icon(Icons.attach_file, color: iconColor),
+                                    tooltip: 'Upload files/images',
+                                    onPressed: _showImageOptionsDialog,
+                                  ),
+
+                                  // Send text
+                                  IconButton(
+                                    iconSize: 38,
+                                    icon: !_isLoading
+                                        ? Icon(Icons.arrow_circle_right_outlined,
+                                            color: iconColor)
+                                        : Icon(Icons.hourglass_top,
+                                            color: iconColor),
+                                    onPressed: () => _sendMessage(_controller.text),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
+// --------------------------------------------------
+// 5) ChatMessage (text is not final!)
+// --------------------------------------------------
 class ChatMessage {
   String text;
+  final Uint8List? imageData; // for images
   final bool isUser;
-  ChatMessage({required this.text, required this.isUser});
+
+  ChatMessage({
+    required this.text,
+    this.imageData,
+    required this.isUser,
+  });
 }
 
+// --------------------------------------------------
+// 6) ChatBubble
+// --------------------------------------------------
 class ChatBubble extends StatelessWidget {
   final ChatMessage message;
   final bool isLight;
 
-  const ChatBubble({required this.message, required this.isLight});
+  const ChatBubble({super.key, required this.message, required this.isLight});
 
   @override
   Widget build(BuildContext context) {
     final alignment =
         message.isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
-    // For dark mode, use a darker bubble if it's user, or slightly lighter if it's bot.
     final userBgColor = isLight ? Colors.blue[100]! : Colors.blueGrey[700]!;
     final botBgColor = isLight ? Colors.grey[200]! : Colors.blueGrey[800]!;
-
     final bgColor = message.isUser ? userBgColor : botBgColor;
     final textColor = isLight ? Colors.black : Colors.white;
+
+    // If we have imageData, show it, otherwise show text
+    Widget contentWidget;
+    if (message.imageData != null) {
+      contentWidget = SizedBox(
+        width: 200,
+        height: 200,
+        child: Image.memory(
+          message.imageData!,
+          fit: BoxFit.cover,
+        ),
+      );
+    } else {
+      contentWidget = Text(
+        message.text.trim(),
+        style: TextStyle(color: textColor),
+      );
+    }
 
     return Column(
       crossAxisAlignment: alignment,
@@ -505,10 +840,7 @@ class ChatBubble extends StatelessWidget {
             color: bgColor,
             borderRadius: BorderRadius.circular(8.0),
           ),
-          child: Text(
-            message.text.trim(),
-            style: TextStyle(color: textColor),
-          ),
+          child: contentWidget,
         ),
       ],
     );
