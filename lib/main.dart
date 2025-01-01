@@ -33,7 +33,6 @@ class SettingsProvider extends ChangeNotifier {
   }
 }
 
-
 class ThemeProvider extends ChangeNotifier {
   bool _isLightMode = true; // default is light mode
 
@@ -94,7 +93,7 @@ class MyApp extends StatelessWidget {
     final themeProvider = context.watch<ThemeProvider>();
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Autarch LLM',
+      title: 'Autarch',
       theme: themeProvider.themeData,
       home: const OllamaChatPage(),
     );
@@ -115,6 +114,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   final _controller = TextEditingController();
   final List<ChatMessage> _messages = [];
   bool _isLoading = false;
+
   // User-configurable settings
   String serverURI = '';
   String _systemPrompt = '';
@@ -124,8 +124,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   late List<String> _modelOptions = [];
 
   late OllamaClient client;
-  late OllamaClient clientModel;
   late bool _isModelListPossible = false;
+
   @override
   void initState() {
     super.initState();
@@ -137,22 +137,22 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     final savedSystemPrompt = box.get('systemPrompt', defaultValue: '');
     final savedServerURI = box.get('serverURI', defaultValue: '');
 
-    // Make sure we cast appropriately
+    // Cast appropriately
     _modelOptions.addAll((savedModelOptions as List).cast<String>());
     _defaultModel = savedDefaultModel;
     _systemPrompt = savedSystemPrompt;
     serverURI = savedServerURI;
 
     // 2) Then set up the Ollama clients
-    final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
-    client = OllamaClient(baseUrl: settingsProvider.ollamaServerURI);
-    clientModel = OllamaClient(baseUrl: '${settingsProvider.ollamaServerURI}/api');
+    final settingsProvider =
+        Provider.of<SettingsProvider>(context, listen: false);
+    client = OllamaClient(baseUrl: '${settingsProvider.ollamaServerURI}/api');
   }
-  
+
   Future<void> clearHiveBox() async {
-  final box = Hive.box('settings'); // Replace 'settings' with your box name
-  await box.clear();
-  print('Hive box cleared!');
+    final box = Hive.box('settings'); 
+    await box.clear();
+    print('Hive box cleared!');
   }
 
   // --------------------------------------------------
@@ -305,8 +305,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 // Save the server URI to the provider
                                 settingsProvider.ollamaServerURI =
                                     serverUriController.text;
-                                settingsProvider.ollamaServerURI = serverUriController.text; 
-                                
+                                settingsProvider.ollamaServerURI =
+                                    serverUriController.text;
+
                                 setState(() {
                                   _systemPrompt = systemPromptController.text;
                                   _defaultModel = tempSelectedModel;
@@ -317,14 +318,17 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 });
                                 // Update theme
                                 themeProvider.isLightMode = tempIsLightMode;
+                                // Refresh the model list
                                 fetchTags(serverUriController.text);
-                                // request(serverUriController.text);
+
                                 // ---------- SAVE to HIVE ----------
                                 final box = Hive.box('settings');
                                 await box.put('modelOptions', _modelOptions);
                                 await box.put('defaultModel', _defaultModel);
                                 await box.put('systemPrompt', _systemPrompt);
-                                await box.put('serverURI', serverUriController.text);
+                                await box.put(
+                                    'serverURI', serverUriController.text);
+
                                 Navigator.of(context).pop();
                               },
                               child: Text(
@@ -384,21 +388,23 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 ),
                               ],
                             ),
-                            _isModelListPossible ? DropdownButton<String>(
-                              value: tempSelectedModel,
-                              onChanged: (String? newValue) {
-                                if (newValue == null) return;
-                                setStateDialog(() {
-                                  tempSelectedModel = newValue;
-                                });
-                              },
-                              items: _modelOptions.map((String modelName) {
-                                return DropdownMenuItem<String>(
-                                  value: modelName,
-                                  child: Text(modelName),
-                                );
-                              }).toList(),
-                            ) : Text('None available'),
+                            _isModelListPossible
+                                ? DropdownButton<String>(
+                                    value: tempSelectedModel,
+                                    onChanged: (String? newValue) {
+                                      if (newValue == null) return;
+                                      setStateDialog(() {
+                                        tempSelectedModel = newValue;
+                                      });
+                                    },
+                                    items: _modelOptions.map((String modelName) {
+                                      return DropdownMenuItem<String>(
+                                        value: modelName,
+                                        child: Text(modelName),
+                                      );
+                                    }).toList(),
+                                  )
+                                : const Text('None available'),
                           ],
                         ),
 
@@ -474,50 +480,60 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   }
 
   // --------------------------------------------------
-  // 3C) Streaming chat (non-final text, so we can append)
+  // 3C) Streaming chat
   // --------------------------------------------------
   Future<void> _sendMessage(String messageText) async {
-    if (messageText.isEmpty) return;
-    setState(() {
-      _messages.add(ChatMessage(text: messageText, isUser: true));
-      _isLoading = true;
-    });
+  print('Sending message: $messageText');
+  print('Default model: $_defaultModel');
+  print('System prompt: $_systemPrompt');
+  print('Server URI: $serverURI');
+  if (messageText.isEmpty) return;
+  setState(() {
+    _messages.add(ChatMessage(text: messageText, isUser: true));
+    _isLoading = true;
+  });
 
-    // Create an empty botMessage
-    ChatMessage botMessage = ChatMessage(text: '', isUser: false);
-    setState(() {
-      _messages.add(botMessage);
-    });
+  // Re-load the default model from Hive right before sending
+  final box = Hive.box('settings');
+  _defaultModel = box.get('defaultModel', defaultValue: ''); // <--- ADDED
 
-    final stream = client.generateCompletionStream(
-      request: GenerateCompletionRequest(
-        model: _defaultModel,
-        prompt: _systemPrompt.isNotEmpty
-            ? "$_systemPrompt\n\nUser: $messageText"
-            : messageText,
-      ),
-    );
+  // Create an empty botMessage
+  ChatMessage botMessage = ChatMessage(text: '', isUser: false);
+  setState(() {
+    _messages.add(botMessage);
+  });
 
-    try {
-      await for (final res in stream) {
-        setState(() {
-          // Append partial tokens here
-          botMessage.text = botMessage.text + (res.response ?? '');
-        });
-      }
-    } catch (e) {
+  final stream = client.generateCompletionStream(
+    request: GenerateCompletionRequest(
+      model: _defaultModel,
+      prompt: _systemPrompt.isNotEmpty
+          ? "$_systemPrompt\n\nUser: $messageText"
+          : messageText,
+    ),
+  );
+
+  try {
+    await for (final res in stream) {
       setState(() {
-        botMessage.text = 'You probably have not set up an endpoint';
-      });
-    } finally {
-      setState(() {
-        _isLoading = false;
+      print(stream);
+        // Append partial tokens here
+        botMessage.text = botMessage.text + (res.response ?? '');
       });
     }
-    _controller.clear();
+  } catch (e) {
+    setState(() {
+      botMessage.text = 'You probably have not set up an endpoint';
+    });
+  } finally {
+    setState(() {
+      _isLoading = false;
+    });
   }
+  _controller.clear();
+}
 
-   Future<void> fetchTags(String url) async {
+
+  Future<void> fetchTags(String url) async {
     print(url);
     final Uri uri = Uri.parse('$url/api/tags');
 
@@ -525,12 +541,13 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       final response = await http.get(
         uri,
         headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json' ,
-        'ngrok-skip-browser-warning': 'true', 
-        'Access-Control-Allow-Origin': 'https://autarch-llm.web.app/',
-        'Access-Control-Allow-Methods': 'GET, POST',
-        "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+          'Access-Control-Allow-Origin': 'https://autarch-llm.web.app/',
+          'Access-Control-Allow-Methods': 'GET, POST',
+          "Access-Control-Allow-Headers":
+              "Origin, X-Requested-With, Content-Type, Accept, Authorization"
         },
       );
 
@@ -538,34 +555,30 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         print(json.decode(response.body));
         Map<String, dynamic> jsonData = json.decode(response.body);
         List<dynamic> models = jsonData['models'];
-        List<String> modelNames = models.map((model) => model['name'] as String).toList();
-        print(modelNames);
+        List<String> modelNames =
+            models.map((model) => model['name'] as String).toList();
+
         _modelOptions = modelNames;
         setState(() {
-        _isModelListPossible = true;
-        print(_modelOptions);
+          _isModelListPossible = true;
         });
         if (_modelOptions.isNotEmpty) {
           _defaultModel = _modelOptions[0];
         }
-            }
-      else{
+      } else {
         print("error");
       }
     } catch (e) {
-      setState(() {
-      
-      });
-
-          // Save updated values in Hive
-    final box = Hive.box('settings');
-    await box.put('modelOptions', _modelOptions);
-    await box.put('defaultModel', _defaultModel);
-    await box.put('systemPrompt', _systemPrompt);
-    await box.put('serverURI', serverURI);
+      // If there's an error, _modelOptions remains unchanged.
+    } finally {
+      // Save updated values in Hive
+      final box = Hive.box('settings');
+      await box.put('modelOptions', _modelOptions);
+      await box.put('defaultModel', _defaultModel);
+      await box.put('systemPrompt', _systemPrompt);
+      await box.put('serverURI', serverURI);
     }
   }
-
 
   // --------------------------------------------------
   // 3D) Show popup of image upload options
@@ -632,24 +645,59 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         appBar: AppBar(
           backgroundColor: appBarColor,
           iconTheme: IconThemeData(color: iconColor),
+
+          // --------------------------------------------------
+          //  NEW: Add Title & Dropdown in a Row
+          // --------------------------------------------------
+          title: Row(
+            children: [
+              Text(
+                'Autarch',
+                style: GoogleFonts.roboto(
+                  color: textColor,
+                  fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
+                ),
+              ),
+              const SizedBox(width: 16),
+
+              // Only show the dropdown if we have model options
+              if (_modelOptions.isNotEmpty) 
+                DropdownButton<String>(
+                  dropdownColor: isLight ? Colors.white : Colors.grey[800],
+                  iconEnabledColor: iconColor,
+                  value: _defaultModel.isNotEmpty ? _defaultModel : _modelOptions[0],
+                  items: _modelOptions.map((String modelName) {
+                    return DropdownMenuItem<String>(
+                      value: modelName,
+                      child: Text(modelName, style: TextStyle(color: textColor)),
+                    );
+                  }).toList(),
+                  onChanged: (String? newValue) async {
+                    if (newValue == null) return;
+                    setState(() {
+                      _defaultModel = newValue;
+                    });
+
+                    // Persist in Hive
+                    final box = Hive.box('settings');
+                    await box.put('defaultModel', _defaultModel);
+                  },
+                ),
+            ],
+          ),
+
+          // New Chat Page
           actions: [
             IconButton(
-              icon: const Icon(Icons.settings),
+              icon: const Icon(Icons.edit_document),
               onPressed: () async {
-    await clearHiveBox();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('All settings have been cleared!')),
-    );
-  },
+                // await clearHiveBox();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('New Chat Page Opened!')),
+                );
+              },
             ),
           ],
-          title: Text(
-            'Autarch LLM',
-            style: GoogleFonts.roboto(
-              color: textColor,
-              fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
-            ),
-          ),
           bottomOpacity: 1,
           shape: LinearBorder.bottom(
             side: BorderSide(color: borderColor, width: 1.0),
@@ -768,19 +816,22 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 style: TextStyle(color: textColor),
                                 decoration: InputDecoration(
                                   hintText: 'Write something...',
-                                  hintStyle:
-                                      TextStyle(color: textColor.withOpacity(0.6)),
+                                  hintStyle: TextStyle(
+                                    color: textColor.withOpacity(0.6),
+                                  ),
                                 ),
                               ),
                               const SizedBox(height: 8),
 
                               // Row of attach vs. send
                               Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                                 children: [
                                   // Attach files/images
                                   IconButton(
-                                    icon: Icon(Icons.attach_file, color: iconColor),
+                                    icon: Icon(Icons.attach_file,
+                                        color: iconColor),
                                     tooltip: 'Upload files/images',
                                     onPressed: _showImageOptionsDialog,
                                   ),
@@ -793,7 +844,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                             color: iconColor)
                                         : Icon(Icons.hourglass_top,
                                             color: iconColor),
-                                    onPressed: () => _sendMessage(_controller.text),
+                                    onPressed: () =>
+                                        _sendMessage(_controller.text),
                                   ),
                                 ],
                               ),
@@ -906,11 +958,10 @@ class CodeBlockBuilder extends MarkdownElementBuilder {
               ),
             ),
           ),
-          // Original “copy” button replaced with our new Stateful widget
           Positioned(
             top: 0,
             right: 0,
-            child: CopyCodeIcon(codeText: codeText,),
+            child: CopyCodeIcon(codeText: codeText),
           ),
         ],
       ),
@@ -955,8 +1006,8 @@ class ChatBubble extends StatelessWidget {
           code: TextStyle(color: textColor, fontFamily: 'monospace'),
         ),
         builders: {
-  'blockquote': CodeBlockBuilder(),
-},
+          'blockquote': CodeBlockBuilder(),
+        },
         onTapLink: (text, href, title) {
           if (href != null) {
             // Implement any link handling if needed
