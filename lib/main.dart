@@ -17,6 +17,140 @@ import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 // --------------------------------------------------
+// 0) ChatSession and provider for multiple sessions
+// --------------------------------------------------
+class ChatSession {
+  final String id;
+  String title;            // first user message
+  List<ChatMessage> messages;
+
+  ChatSession({
+    required this.id,
+    required this.title,
+    required this.messages,
+  });
+
+  // Convert to Map for saving into Hive
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'title': title,
+      'messages': messages
+          .map((m) => {
+                'text': m.text,
+                'imageData': m.imageData,
+                'isUser': m.isUser,
+              })
+          .toList(),
+    };
+  }
+
+  // Convert from Map
+  factory ChatSession.fromMap(Map<String, dynamic> map) {
+    return ChatSession(
+      id: map['id'],
+      title: map['title'] ?? '',
+      messages: (map['messages'] as List<dynamic>)
+          .map((msg) => ChatMessage(
+                text: msg['text'] ?? '',
+                imageData: msg['imageData'] != null
+                    ? Uint8List.fromList(List<int>.from(msg['imageData']))
+                    : null,
+                isUser: msg['isUser'] ?? false,
+              ))
+          .toList(),
+    );
+  }
+}
+
+/// Provider to handle creating/loading/saving ChatSession objects
+class ChatSessionsProvider extends ChangeNotifier {
+  List<ChatSession> _sessions = [];
+  List<ChatSession> get sessions => _sessions;
+
+  late Box<dynamic> _chatsBox;
+
+  Future<void> init() async {
+    _chatsBox = await Hive.openBox('chats');
+    _loadSessionsFromHive();
+  }
+
+  // Called once at startup
+  void _loadSessionsFromHive() {
+    final List<dynamic> stored = _chatsBox.get('sessions', defaultValue: []);
+    _sessions = stored
+        .map((item) => ChatSession.fromMap(item as Map<String, dynamic>))
+        .toList();
+    notifyListeners();
+  }
+
+  // Save entire sessions list to Hive
+  Future<void> _saveSessionsToHive() async {
+    final List<Map<String, dynamic>> asMaps =
+        _sessions.map((s) => s.toMap()).toList();
+    await _chatsBox.put('sessions', asMaps);
+  }
+
+  // Create new session with blank messages
+  Future<ChatSession> createNewSession() async {
+    final newId = DateTime.now().millisecondsSinceEpoch.toString();
+    ChatSession newSession =
+        ChatSession(id: newId, title: 'Untitled', messages: []);
+    _sessions.insert(0, newSession);
+    await _saveSessionsToHive();
+    notifyListeners();
+    return newSession;
+  }
+
+  // Get existing session
+  ChatSession? getSessionById(String id) {
+    try {
+      return _sessions.firstWhere((s) => s.id == id);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Add a message to a session
+  Future<void> addMessage({
+    required String sessionId,
+    required ChatMessage message,
+  }) async {
+    final session = getSessionById(sessionId);
+    if (session == null) return;
+
+    // If session has no user messages yet, let's set the title
+    if (session.title == 'Untitled' && message.isUser && message.text.isNotEmpty) {
+      session.title = message.text;
+    }
+
+    session.messages.add(message);
+    await _saveSessionsToHive();
+    notifyListeners();
+  }
+
+  // Overwrite the last bot message text (streaming tokens)
+  Future<void> updateLastBotMessage({
+    required String sessionId,
+    required String newText,
+  }) async {
+    final session = getSessionById(sessionId);
+    if (session == null) return;
+    if (session.messages.isEmpty) return;
+
+    session.messages.last.text = newText;
+    // Because we are streaming tokens, let's NOT overkill saving every token.
+    // In a real app, you might do a debounce. Here, let's skip immediate save
+    notifyListeners();
+  }
+
+  // Finalize the streaming message
+  Future<void> finalizeMessage(String sessionId) async {
+    await _saveSessionsToHive();
+  }
+}
+
+// --------------------------------------------------
 // 1) SettingsProvider & ThemeProvider
 // --------------------------------------------------
 class SettingsProvider extends ChangeNotifier {
@@ -64,11 +198,12 @@ void main() async {
 
   // Initialize HIVE
   await Hive.initFlutter();
+
   // Open a box for storing settings
-  final box = await Hive.openBox('settings');
+  final settingsBox = await Hive.openBox('settings');
 
   // Pull whatever was last saved, or fallback to a default
-  final savedServerURI = box.get('serverURI', defaultValue: 'http://xyz:11434');
+  final savedServerURI = settingsBox.get('serverURI', defaultValue: 'http://xyz:11434');
 
   runApp(
     MultiProvider(
@@ -79,8 +214,11 @@ void main() async {
             initialOllamaServerURI: savedServerURI,
           ),
         ),
+        ChangeNotifierProvider(
+          create: (_) => ChatSessionsProvider()..init(),
+        ),
       ],
-      child: MyApp(),
+      child: const MyApp(),
     ),
   );
 }
@@ -91,11 +229,109 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final themeProvider = context.watch<ThemeProvider>();
+    final chatSessionsProvider = context.watch<ChatSessionsProvider>();
+
+    // We'll pick the first session if it exists, else create a new one
+    final sessions = chatSessionsProvider.sessions;
+
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Autarch',
       theme: themeProvider.themeData,
-      home: const OllamaChatPage(),
+      // Instead of 'home: const HomePage()', we directly load OllamaChatPage
+      home: sessions.isEmpty
+          ? FutureBuilder<ChatSession>(
+              future: chatSessionsProvider.createNewSession(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.done) {
+                  final newSession = snapshot.data;
+                  if (newSession == null) {
+                    return const Scaffold(
+                      body: Center(child: Text("Error creating session")),
+                    );
+                  }
+                  return OllamaChatPage(sessionId: newSession.id);
+                } else {
+                  return const Scaffold(
+                    body: Center(child: CircularProgressIndicator()),
+                  );
+                }
+              },
+            )
+          : OllamaChatPage(sessionId: sessions[0].id),
+    );
+  }
+}
+
+// --------------------------------------------------
+// 2A) HomePage - (NO LONGER USED, but we keep it here for reference)
+// --------------------------------------------------
+class HomePage extends StatelessWidget {
+  const HomePage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final chatSessionsProvider = context.watch<ChatSessionsProvider>();
+    final themeProvider = context.watch<ThemeProvider>();
+    final isLight = themeProvider.isLightMode;
+    final appBarColor = isLight ? Colors.white : Colors.black;
+    final iconColor = isLight ? Colors.black : Colors.white;
+    final textColor = isLight ? Colors.black : Colors.white;
+
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: appBarColor,
+        iconTheme: IconThemeData(color: iconColor),
+        title: Row(
+          children: [
+            Text(
+              'Autarch - Chat Sessions',
+              style: GoogleFonts.roboto(
+                color: textColor,
+                fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add),
+            onPressed: () async {
+              // Create a new session
+              final newSession = await chatSessionsProvider.createNewSession();
+              // Navigate to that session's chat page
+              if (context.mounted) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => OllamaChatPage(sessionId: newSession.id),
+                  ),
+                );
+              }
+            },
+          ),
+        ],
+      ),
+      body: ListView.builder(
+        itemCount: chatSessionsProvider.sessions.length,
+        itemBuilder: (context, index) {
+          final session = chatSessionsProvider.sessions[index];
+          return ListTile(
+            title: Text(
+              session.title == 'Untitled' ? '(New Chat)' : session.title,
+              style: TextStyle(color: textColor),
+            ),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => OllamaChatPage(sessionId: session.id),
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }
@@ -104,7 +340,8 @@ class MyApp extends StatelessWidget {
 // 3) Chat Page
 // --------------------------------------------------
 class OllamaChatPage extends StatefulWidget {
-  const OllamaChatPage({super.key});
+  final String sessionId;
+  const OllamaChatPage({super.key, required this.sessionId});
 
   @override
   _OllamaChatPageState createState() => _OllamaChatPageState();
@@ -112,8 +349,10 @@ class OllamaChatPage extends StatefulWidget {
 
 class _OllamaChatPageState extends State<OllamaChatPage> {
   final _controller = TextEditingController();
-  final List<ChatMessage> _messages = [];
   bool _isLoading = false;
+
+  // Instead of local list, we'll pull from the provider
+  ChatSession? _currentSession;
 
   // User-configurable settings
   String serverURI = '';
@@ -126,33 +365,48 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   late OllamaClient client;
   late bool _isModelListPossible = false;
 
-  @override
-  void initState() {
-    super.initState();
+@override
+void initState() {
+  super.initState();
 
-    // 1) Load from Hive first
-    final box = Hive.box('settings');
-    final savedModelOptions = box.get('modelOptions', defaultValue: []);
-    final savedDefaultModel = box.get('defaultModel', defaultValue: '');
-    final savedSystemPrompt = box.get('systemPrompt', defaultValue: '');
-    final savedServerURI = box.get('serverURI', defaultValue: '');
+  final box = Hive.box('settings');
+  final savedModelOptions = box.get('modelOptions', defaultValue: []);
+  final savedDefaultModel = box.get('defaultModel', defaultValue: '');
+  final savedSystemPrompt = box.get('systemPrompt', defaultValue: '');
+  final savedServerURI = box.get('serverURI', defaultValue: '');
 
-    // Cast appropriately
-    _modelOptions.addAll((savedModelOptions as List).cast<String>());
-    _defaultModel = savedDefaultModel;
-    _systemPrompt = savedSystemPrompt;
-    serverURI = savedServerURI;
+  _modelOptions.addAll((savedModelOptions as List).cast<String>());
+  _defaultModel = savedDefaultModel;
+  _systemPrompt = savedSystemPrompt;
+  serverURI = savedServerURI;
 
-    // 2) Then set up the Ollama clients
-    final settingsProvider =
-        Provider.of<SettingsProvider>(context, listen: false);
-    client = OllamaClient(baseUrl: '${settingsProvider.ollamaServerURI}/api');
-  }
+  final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
+
+
+  // Define a default URI
+  const String defaultURI = 'https://default.server.com/api';
+
+  // Use the provided URI or fallback to the default
+  final uriToUse = settingsProvider.ollamaServerURI.isNotEmpty
+      ? settingsProvider.ollamaServerURI
+      : defaultURI;
+  print("----------------------------------------");
+  print(settingsProvider.ollamaServerURI);
+  print(uriToUse);
+  client = OllamaClient(baseUrl: uriToUse);
+  print(client.baseUrl);
+
+  // Load the session from ChatSessionsProvider
+  final chatSessionsProvider =
+      Provider.of<ChatSessionsProvider>(context, listen: false);
+  _currentSession = chatSessionsProvider.getSessionById(widget.sessionId);
+}
+
 
   Future<void> clearHiveBox() async {
     final box = Hive.box('settings'); 
     await box.clear();
-    print('Hive box cleared!');
+    debugPrint('Hive box cleared!');
   }
 
   // --------------------------------------------------
@@ -166,13 +420,16 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
 
       if (pickedFile != null) {
         final bytes = await pickedFile.readAsBytes();
-        setState(() {
-          _messages.add(ChatMessage(
+        final chatSessionsProvider =
+            Provider.of<ChatSessionsProvider>(context, listen: false);
+        await chatSessionsProvider.addMessage(
+          sessionId: widget.sessionId,
+          message: ChatMessage(
             text: '',
             imageData: bytes,
             isUser: true,
-          ));
-        });
+          ),
+        );
       }
     } catch (e) {
       debugPrint('Error picking image from gallery: $e');
@@ -191,13 +448,16 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       final XFile? photo = await picker.pickImage(source: ImageSource.camera);
       if (photo != null) {
         final bytes = await File(photo.path).readAsBytes();
-        setState(() {
-          _messages.add(ChatMessage(
+        final chatSessionsProvider =
+            Provider.of<ChatSessionsProvider>(context, listen: false);
+        await chatSessionsProvider.addMessage(
+          sessionId: widget.sessionId,
+          message: ChatMessage(
             text: '',
             imageData: bytes,
             isUser: true,
-          ));
-        });
+          ),
+        );
       }
     } catch (e) {
       debugPrint('Error taking photo: $e');
@@ -214,39 +474,47 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         if (pickedFile.extension != null &&
             ['png', 'jpg', 'jpeg']
                 .contains(pickedFile.extension!.toLowerCase())) {
+          final chatSessionsProvider =
+              Provider.of<ChatSessionsProvider>(context, listen: false);
+
           if (kIsWeb) {
             final bytes = pickedFile.bytes;
             if (bytes != null) {
-              setState(() {
-                _messages.add(ChatMessage(
+              await chatSessionsProvider.addMessage(
+                sessionId: widget.sessionId,
+                message: ChatMessage(
                   text: '',
                   imageData: bytes,
                   isUser: true,
-                ));
-              });
+                ),
+              );
             }
           } else {
             if (pickedFile.path != null) {
               final file = File(pickedFile.path!);
               final bytes = await file.readAsBytes();
-              setState(() {
-                _messages.add(ChatMessage(
+              await chatSessionsProvider.addMessage(
+                sessionId: widget.sessionId,
+                message: ChatMessage(
                   text: '',
                   imageData: bytes,
                   isUser: true,
-                ));
-              });
+                ),
+              );
             }
           }
         } else {
           // Some other file
-          setState(() {
-            _messages.add(ChatMessage(
+          final chatSessionsProvider =
+              Provider.of<ChatSessionsProvider>(context, listen: false);
+          await chatSessionsProvider.addMessage(
+            sessionId: widget.sessionId,
+            message: ChatMessage(
               text: '[Uploaded File: ${pickedFile.name}]',
               imageData: null,
               isUser: true,
-            ));
-          });
+            ),
+          );
         }
       }
     } catch (e) {
@@ -311,6 +579,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 setState(() {
                                   _systemPrompt = systemPromptController.text;
                                   _defaultModel = tempSelectedModel;
+                                  print("Server URI: ${serverUriController.text}");
                                   client = OllamaClient(
                                     baseUrl:
                                         '${settingsProvider.ollamaServerURI}/api',
@@ -329,7 +598,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 await box.put(
                                     'serverURI', serverUriController.text);
 
-                                Navigator.of(context).pop();
+                                if (context.mounted) {
+                                  Navigator.of(context).pop();
+                                }
                               },
                               child: Text(
                                 'Save',
@@ -397,7 +668,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                         tempSelectedModel = newValue;
                                       });
                                     },
-                                    items: _modelOptions.map((String modelName) {
+                                    items:
+                                        _modelOptions.map((String modelName) {
                                       return DropdownMenuItem<String>(
                                         value: modelName,
                                         child: Text(modelName),
@@ -483,58 +755,74 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   // 3C) Streaming chat
   // --------------------------------------------------
   Future<void> _sendMessage(String messageText) async {
-  print('Sending message: $messageText');
-  print('Default model: $_defaultModel');
-  print('System prompt: $_systemPrompt');
-  print('Server URI: $serverURI');
-  if (messageText.isEmpty) return;
-  setState(() {
-    _messages.add(ChatMessage(text: messageText, isUser: true));
-    _isLoading = true;
-  });
 
-  // Re-load the default model from Hive right before sending
-  final box = Hive.box('settings');
-  _defaultModel = box.get('defaultModel', defaultValue: ''); // <--- ADDED
+    if (messageText.isEmpty) return;
+    setState(() {
+      _isLoading = true;
+    });
 
-  // Create an empty botMessage
-  ChatMessage botMessage = ChatMessage(text: '', isUser: false);
-  setState(() {
-    _messages.add(botMessage);
-  });
+    // Re-load the default model from Hive right before sending
+    final box = Hive.box('settings');
+    _defaultModel = box.get('defaultModel', defaultValue: '');
 
-  final stream = client.generateCompletionStream(
-    request: GenerateCompletionRequest(
-      model: _defaultModel,
-      prompt: _systemPrompt.isNotEmpty
-          ? "$_systemPrompt\n\nUser: $messageText"
-          : messageText,
-    ),
-  );
+    // Add user message to the session
+    final chatSessionsProvider =
+        Provider.of<ChatSessionsProvider>(context, listen: false);
+    await chatSessionsProvider.addMessage(
+      sessionId: widget.sessionId,
+      message: ChatMessage(text: messageText, isUser: true),
+    );
 
-  try {
-    await for (final res in stream) {
+    // Create an empty botMessage to hold partial tokens
+    // so we can update it as streaming tokens arrive
+    final botMessage = ChatMessage(text: '', isUser: false);
+    await chatSessionsProvider.addMessage(
+      sessionId: widget.sessionId,
+      message: botMessage,
+    );
+
+    final stream = client.generateCompletionStream(
+      request: GenerateCompletionRequest(
+        model: _defaultModel,
+        prompt: _systemPrompt.isNotEmpty
+            ? "$_systemPrompt\n\nUser: $messageText"
+            : messageText,
+      ),
+    );
+
+    print(_defaultModel);
+    print(_systemPrompt);
+    print(serverURI);
+    print(messageText);
+    print("..........................................");
+    print(client.baseUrl);
+    print("..........................................");
+
+    try {
+      await for (final res in stream) {
+        print(res);
+        // Append partial tokens
+        final newText = botMessage.text + (res.response ?? '');
+        await chatSessionsProvider.updateLastBotMessage(
+          sessionId: widget.sessionId,
+          newText: newText,
+        );
+      }
+    } catch (e) {
+      await chatSessionsProvider.updateLastBotMessage(
+        sessionId: widget.sessionId,
+        newText: 'Error: Possibly no server endpoint',
+      );
+    } finally {
+      await chatSessionsProvider.finalizeMessage(widget.sessionId);
       setState(() {
-      print(stream);
-        // Append partial tokens here
-        botMessage.text = botMessage.text + (res.response ?? '');
+        _isLoading = false;
       });
     }
-  } catch (e) {
-    setState(() {
-      botMessage.text = 'You probably have not set up an endpoint';
-    });
-  } finally {
-    setState(() {
-      _isLoading = false;
-    });
+    _controller.clear();
   }
-  _controller.clear();
-}
-
 
   Future<void> fetchTags(String url) async {
-    print(url);
     final Uri uri = Uri.parse('$url/api/tags');
 
     try {
@@ -552,7 +840,6 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       );
 
       if (response.statusCode == 200) {
-        print(json.decode(response.body));
         Map<String, dynamic> jsonData = json.decode(response.body);
         List<dynamic> models = jsonData['models'];
         List<String> modelNames =
@@ -566,10 +853,10 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
           _defaultModel = _modelOptions[0];
         }
       } else {
-        print("error");
+        debugPrint("error in fetchTags: ${response.statusCode}");
       }
     } catch (e) {
-      // If there's an error, _modelOptions remains unchanged.
+      debugPrint("Exception while fetching tags: $e");
     } finally {
       // Save updated values in Hive
       final box = Hive.box('settings');
@@ -633,22 +920,23 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   // --------------------------------------------------
   @override
   Widget build(BuildContext context) {
-    final isLight = context.watch<ThemeProvider>().isLightMode;
+    final themeProvider = context.watch<ThemeProvider>();
+    final isLight = themeProvider.isLightMode;
 
     final appBarColor = isLight ? Colors.white : Colors.black;
     final iconColor = isLight ? Colors.black : Colors.white;
     final textColor = isLight ? Colors.black : Colors.white;
     final borderColor = isLight ? Colors.black : Colors.white;
 
+    // Re-fetch the current session from provider in case it changed
+    final chatSessionsProvider = context.watch<ChatSessionsProvider>();
+    _currentSession = chatSessionsProvider.getSessionById(widget.sessionId);
+
     return SafeArea(
       child: Scaffold(
         appBar: AppBar(
           backgroundColor: appBarColor,
           iconTheme: IconThemeData(color: iconColor),
-
-          // --------------------------------------------------
-          //  NEW: Add Title & Dropdown in a Row
-          // --------------------------------------------------
           title: Row(
             children: [
               Text(
@@ -659,13 +947,13 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                 ),
               ),
               const SizedBox(width: 16),
-
-              // Only show the dropdown if we have model options
-              if (_modelOptions.isNotEmpty) 
+              if (_modelOptions.isNotEmpty)
                 DropdownButton<String>(
                   dropdownColor: isLight ? Colors.white : Colors.grey[800],
                   iconEnabledColor: iconColor,
-                  value: _defaultModel.isNotEmpty ? _defaultModel : _modelOptions[0],
+                  value: _defaultModel.isNotEmpty
+                      ? _defaultModel
+                      : _modelOptions[0],
                   items: _modelOptions.map((String modelName) {
                     return DropdownMenuItem<String>(
                       value: modelName,
@@ -685,16 +973,23 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                 ),
             ],
           ),
-
-          // New Chat Page
+          // The "New Chat Page" icon in *this* page can also open a fresh chat
           actions: [
             IconButton(
               icon: const Icon(Icons.edit_document),
               onPressed: () async {
-                // await clearHiveBox();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('New Chat Page Opened!')),
-                );
+                // Create a new session
+                final newSession =
+                    await chatSessionsProvider.createNewSession();
+                if (context.mounted) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) =>
+                          OllamaChatPage(sessionId: newSession.id),
+                    ),
+                  );
+                }
               },
             ),
           ],
@@ -703,18 +998,19 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
             side: BorderSide(color: borderColor, width: 1.0),
           ),
         ),
+        // Drawer: list out existing chat sessions
         drawer: Drawer(
           child: Column(
             children: <Widget>[
-              // Scrollable area
               Expanded(
                 child: ListView(
                   padding: EdgeInsets.zero,
-                  children: <Widget>[
+                  children: [
+                    // Label
                     Padding(
                       padding: const EdgeInsets.only(top: 8.0, left: 8.0),
                       child: Text(
-                        'Today',
+                        'Your Chats',
                         style: GoogleFonts.roboto(
                           color: textColor,
                           fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
@@ -722,18 +1018,25 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                       ),
                     ),
                     const Divider(),
-                    ListTile(
-                      title: Text('Chat 1', style: TextStyle(color: textColor)),
-                      onTap: () => Navigator.pop(context),
-                    ),
-                    ListTile(
-                      title: Text('Chat 2', style: TextStyle(color: textColor)),
-                      onTap: () => Navigator.pop(context),
-                    ),
-                    ListTile(
-                      title: Text('Chat 3', style: TextStyle(color: textColor)),
-                      onTap: () => Navigator.pop(context),
-                    ),
+                    for (final session in chatSessionsProvider.sessions)
+                      ListTile(
+                        title: Text(
+                          session.title == 'Untitled'
+                              ? '(New Chat)'
+                              : session.title,
+                          style: TextStyle(color: textColor),
+                        ),
+                        onTap: () {
+                          Navigator.pop(context); // close drawer
+                          Navigator.pushReplacement(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  OllamaChatPage(sessionId: session.id),
+                            ),
+                          );
+                        },
+                      ),
                   ],
                 ),
               ),
@@ -770,9 +1073,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                   ),
                   child: ListView.builder(
                     padding: const EdgeInsets.all(8.0),
-                    itemCount: _messages.length,
+                    itemCount: _currentSession?.messages.length ?? 0,
                     itemBuilder: (context, index) {
-                      final message = _messages[index];
+                      final message = _currentSession!.messages[index];
                       return ChatBubble(message: message, isLight: isLight);
                     },
                   ),
