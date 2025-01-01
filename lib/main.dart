@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show File;
+import 'dart:typed_data';
+import 'package:autarchllm/modelinfo.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,7 +13,6 @@ import 'package:ollama_dart/ollama_dart.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
-import 'package:markdown/markdown.dart' as md;
 // ----------------- HIVE imports --------------------
 import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -21,7 +22,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 // --------------------------------------------------
 class ChatSession {
   final String id;
-  String title;            // first user message
+  String title; // first user message
   List<ChatMessage> messages;
 
   ChatSession({
@@ -38,7 +39,7 @@ class ChatSession {
       'messages': messages
           .map((m) => {
                 'text': m.text,
-                'imageData': m.imageData,
+                'imageData': m.imageData != null ? m.imageData!.toList() : null,
                 'isUser': m.isUser,
               })
           .toList(),
@@ -70,6 +71,7 @@ class ChatSessionsProvider extends ChangeNotifier {
 
   late Box<dynamic> _chatsBox;
 
+  /// Initialize the provider by opening the Hive box and loading sessions
   Future<void> init() async {
     _chatsBox = await Hive.openBox('chats');
     _loadSessionsFromHive();
@@ -77,18 +79,27 @@ class ChatSessionsProvider extends ChangeNotifier {
 
   // Called once at startup
   void _loadSessionsFromHive() {
-    final List<dynamic> stored = _chatsBox.get('sessions', defaultValue: []);
-    _sessions = stored
-        .map((item) => ChatSession.fromMap(item as Map<String, dynamic>))
-        .toList();
+    try {
+      final List<dynamic> stored = _chatsBox.get('sessions', defaultValue: []);
+      _sessions = stored
+          .map((item) => ChatSession.fromMap(Map<String, dynamic>.from(item)))
+          .toList();
+    } catch (e) {
+      debugPrint('Error loading sessions from Hive: $e');
+      _sessions = [];
+    }
     notifyListeners();
   }
 
   // Save entire sessions list to Hive
   Future<void> _saveSessionsToHive() async {
-    final List<Map<String, dynamic>> asMaps =
-        _sessions.map((s) => s.toMap()).toList();
-    await _chatsBox.put('sessions', asMaps);
+    try {
+      final List<Map<String, dynamic>> asMaps =
+          _sessions.map((s) => s.toMap()).toList();
+      await _chatsBox.put('sessions', asMaps);
+    } catch (e) {
+      debugPrint('Error saving sessions to Hive: $e');
+    }
   }
 
   // Create new session with blank messages
@@ -139,8 +150,7 @@ class ChatSessionsProvider extends ChangeNotifier {
     if (session.messages.isEmpty) return;
 
     session.messages.last.text = newText;
-    // Because we are streaming tokens, let's NOT overkill saving every token.
-    // In a real app, you might do a debounce. Here, let's skip immediate save
+
     notifyListeners();
   }
 
@@ -203,7 +213,7 @@ class ThemeProvider extends ChangeNotifier {
 // --------------------------------------------------
 // 2) Main Entry
 // --------------------------------------------------
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize HIVE
@@ -212,8 +222,16 @@ void main() async {
   // Open a box for storing settings
   final settingsBox = await Hive.openBox('settings');
 
-  // Pull whatever was last saved, or fallback to a default
+  // Open a box for chats to ensure it's ready
+  final chatsBox = await Hive.openBox('chats');
+
+  // Instantiate ChatSessionsProvider and initialize it
+  final chatSessionsProvider = ChatSessionsProvider();
+  await chatSessionsProvider.init();
+
+  // Pull whatever was last saved, or fallback to defaults
   final savedServerURI = settingsBox.get('serverURI', defaultValue: 'http://xyz:11434');
+  final savedSystemPrompt = settingsBox.get('systemPrompt', defaultValue: '');
 
   runApp(
     MultiProvider(
@@ -221,11 +239,12 @@ void main() async {
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(
           create: (_) => SettingsProvider(
-            initialOllamaServerURI: savedServerURI, initialSystemPrompt: 'Be nice',
+            initialOllamaServerURI: savedServerURI,
+            initialSystemPrompt: savedSystemPrompt,
           ),
         ),
         ChangeNotifierProvider(
-          create: (_) => ChatSessionsProvider()..init(),
+          create: (_) => chatSessionsProvider,
         ),
       ],
       child: const MyApp(),
@@ -248,7 +267,6 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Autarch',
       theme: themeProvider.themeData,
-      // Instead of 'home: const HomePage()', we directly load OllamaChatPage
       home: sessions.isEmpty
           ? FutureBuilder<ChatSession>(
               future: chatSessionsProvider.createNewSession(),
@@ -370,15 +388,15 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   String _defaultModel = ''; // default selection
 
   // The list of all AI model options
-  late List<String> _modelOptions = [];
+  List<String> _modelOptions = [];
 
   late OllamaClient client;
-  late bool _isModelListPossible = false;
+  bool _isModelListPossible = false;
 
- @override
+  @override
   void initState() {
     super.initState();
-    print(_defaultModel);
+
     final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
     _systemPrompt = settingsProvider.systemPrompt;
     serverURI = settingsProvider.ollamaServerURI;
@@ -403,11 +421,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     fetchTags(baseUri);
   }
 
-
-
-
   Future<void> clearHiveBox() async {
-    final box = Hive.box('settings'); 
+    final box = Hive.box('settings');
     await box.clear();
     debugPrint('Hive box cleared!');
   }
@@ -576,30 +591,32 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 // Save the server URI to the provider
                                 settingsProvider.ollamaServerURI =
                                     serverUriController.text;
-                                settingsProvider.ollamaServerURI =
-                                    serverUriController.text;
+
+                                settingsProvider.systemPrompt =
+                                    systemPromptController.text;
 
                                 setState(() {
-                                  _systemPrompt = systemPromptController.text;
+                                  _systemPrompt =
+                                      systemPromptController.text;
                                   _defaultModel = tempSelectedModel;
-                                  print("Server URI: ${serverUriController.text}");
+                                  // Re-initialize the client with new URI
+                                  final uriToUse = settingsProvider.ollamaServerURI.endsWith('/api')
+                                      ? settingsProvider.ollamaServerURI
+                                      : '${settingsProvider.ollamaServerURI}/api';
                                   client = OllamaClient(
-                                    baseUrl:
-                                        '${settingsProvider.ollamaServerURI}/api',
+                                    baseUrl: uriToUse,
                                   );
+                                  // Fetch model options with new URI
+                                  fetchTags(uriToUse);
                                 });
                                 // Update theme
                                 themeProvider.isLightMode = tempIsLightMode;
-                                // Refresh the model list
-                                fetchTags(serverUriController.text);
-
-                                // ---------- SAVE to HIVE ----------
+                                // Persist settings to Hive
                                 final box = Hive.box('settings');
                                 await box.put('modelOptions', _modelOptions);
                                 await box.put('defaultModel', _defaultModel);
                                 await box.put('systemPrompt', _systemPrompt);
-                                await box.put(
-                                    'serverURI', serverUriController.text);
+                                await box.put('serverURI', serverUriController.text);
 
                                 if (context.mounted) {
                                   Navigator.of(context).pop();
@@ -636,6 +653,11 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 'Ollama server URI: https://xyz.ngrok-free.app',
                             border: OutlineInputBorder(),
                           ),
+                          keyboardType: TextInputType.url,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(
+                                RegExp(r'https?://[\w.-]+')),
+                          ],
                         ),
                         const SizedBox(height: 12),
 
@@ -649,38 +671,58 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                         const SizedBox(height: 12),
 
                         // Default Model
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              children: [
-                                const Icon(Icons.pets, size: 20),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Default Model',
-                                  style: GoogleFonts.roboto(fontSize: 15),
-                                ),
-                              ],
-                            ),
-                            _isModelListPossible
-                                ? DropdownButton<String>(
-                                    value: tempSelectedModel,
-                                    onChanged: (String? newValue) {
-                                      if (newValue == null) return;
-                                      setStateDialog(() {
-                                        tempSelectedModel = newValue;
-                                      });
-                                    },
-                                    items:
-                                        _modelOptions.map((String modelName) {
-                                      return DropdownMenuItem<String>(
-                                        value: modelName,
-                                        child: Text(modelName),
-                                      );
-                                    }).toList(),
+                        GestureDetector(
+                          onTap: () {
+                            Navigator.of(context).push(MaterialPageRoute(builder: (context) => ModelInformationPage(url: serverUriController.text, modelName: _defaultModel,)));
+                          },
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.pets, size: 20),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Default Model',
+                                    style: GoogleFonts.roboto(fontSize: 15),
+                                  ),
+                                ],
+                              ),
+                              _isModelListPossible
+                                  // ? DropdownButton<String>(
+                                  //     value: tempSelectedModel.isNotEmpty
+                                  //         ? tempSelectedModel
+                                  //         : null,
+                                  //     hint: const Text('Select Model'),
+                                  //     onChanged: (String? newValue) {
+                                  //       if (newValue == null) return;
+                                  //       setStateDialog(() {
+                                  //         tempSelectedModel = newValue;
+                                  //       });
+                                  //     },
+                                  //     items: _modelOptions.map((String modelName) {
+                                  //       return DropdownMenuItem<String>(
+                                  //         value: modelName,
+                                  //         child: Text(modelName),
+                                  //       );
+                                  //     }).toList(),
+                                  //   )
+                                  ? Row(
+                                      children: [
+                                        const Icon(Icons.check_circle,
+                                            color: Colors.green),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          tempSelectedModel.isNotEmpty
+                                              ? tempSelectedModel
+                                              : 'None selected',
+                                          style: GoogleFonts.roboto(fontSize: 15),
+                                        ),
+                                      ],
                                   )
-                                : const Text('None available'),
-                          ],
+                                  : const Text('None available'),
+                            ],
+                          ),
                         ),
 
                         // APP Section
@@ -730,9 +772,41 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
 
                         // Delete All Conversations
                         GestureDetector(
-                          onTap: () {
+                          onTap: () async {
                             // Implement your deletion logic
-                            Navigator.of(context).pop();
+                            final confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: const Text('Confirm Deletion'),
+                                content: const Text(
+                                    'Are you sure you want to delete all conversations?'),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(true),
+                                    child: const Text(
+                                      'Delete',
+                                      style: TextStyle(color: Colors.red),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+
+                            if (confirm == true) {
+                              final chatSessionsProvider =
+                                  Provider.of<ChatSessionsProvider>(context,
+                                      listen: false);
+                              chatSessionsProvider._sessions.clear();
+                              await chatSessionsProvider._saveSessionsToHive();
+                              chatSessionsProvider.notifyListeners();
+                              Navigator.of(context).pop();
+                            }
                           },
                           child: const Padding(
                             padding: EdgeInsets.symmetric(vertical: 8.0),
@@ -757,118 +831,117 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   // --------------------------------------------------
   // 3C) Streaming chat
   // --------------------------------------------------
-Future<void> _sendMessage(String messageText) async {
-  if (messageText.isEmpty) return;
-  setState(() {
-    _isLoading = true;
-  });
+  Future<void> _sendMessage(String messageText) async {
+    if (messageText.isEmpty) return;
+    setState(() {
+      _isLoading = true;
+    });
 
-  // Access the existing SettingsProvider
-  final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
-  _defaultModel = Hive.box('settings').get('defaultModel', defaultValue: '');
+    // Access the existing SettingsProvider
+    final settingsProvider =
+        Provider.of<SettingsProvider>(context, listen: false);
+    _defaultModel = Hive.box('settings').get('defaultModel', defaultValue: '');
 
-  // Add user message to the session
-  final chatSessionsProvider =
-      Provider.of<ChatSessionsProvider>(context, listen: false);
-  await chatSessionsProvider.addMessage(
-    sessionId: widget.sessionId,
-    message: ChatMessage(text: messageText, isUser: true),
-  );
+    // Add user message to the session
+    final chatSessionsProvider =
+        Provider.of<ChatSessionsProvider>(context, listen: false);
+    await chatSessionsProvider.addMessage(
+      sessionId: widget.sessionId,
+      message: ChatMessage(text: messageText, isUser: true),
+    );
 
-  // Create an empty botMessage to hold partial tokens
-  final botMessage = ChatMessage(text: '', isUser: false);
-  await chatSessionsProvider.addMessage(
-    sessionId: widget.sessionId,
-    message: botMessage,
-  );
+    // Create an empty botMessage to hold partial tokens
+    final botMessage = ChatMessage(text: '', isUser: false);
+    await chatSessionsProvider.addMessage(
+      sessionId: widget.sessionId,
+      message: botMessage,
+    );
 
-  final stream = client.generateCompletionStream(
-    request: GenerateCompletionRequest(
-      model: _defaultModel,
-      prompt: settingsProvider.systemPrompt.isNotEmpty
-          ? "${settingsProvider.systemPrompt}\n\nUser: $messageText"
-          : messageText,
-    ),
-  );
+    final stream = client.generateCompletionStream(
+      request: GenerateCompletionRequest(
+        model: _defaultModel,
+        prompt: settingsProvider.systemPrompt.isNotEmpty
+            ? "${settingsProvider.systemPrompt}\n\nUser: $messageText"
+            : messageText,
+      ),
+    );
 
-  try {
-    await for (final res in stream) {
-      final newText = botMessage.text + (res.response ?? '');
+    print("Using Model: $_defaultModel");
+    print("System Prompt: ${settingsProvider.systemPrompt}");
+    print("Server URI: ${client.baseUrl}");
+    print("User Message: $messageText");
+
+    try {
+      await for (final res in stream) {
+        print(res);
+        // Append partial tokens
+        final newText = botMessage.text + (res.response ?? '');
+        await chatSessionsProvider.updateLastBotMessage(
+          sessionId: widget.sessionId,
+          newText: newText,
+        );
+      }
+    } catch (e) {
       await chatSessionsProvider.updateLastBotMessage(
         sessionId: widget.sessionId,
-        newText: newText,
+        newText: 'Error: Possibly no server endpoint or invalid response.',
       );
-    }
-  } catch (e) {
-    await chatSessionsProvider.updateLastBotMessage(
-      sessionId: widget.sessionId,
-      newText: 'Error: $e',
-    );
-  } finally {
-    await chatSessionsProvider.finalizeMessage(widget.sessionId);
-    setState(() {
-      _isLoading = false;
-    });
-  }
-  _controller.clear();
-}
-
-
-Future<void> fetchTags(String url) async {
-  print('Fetching tags from: $url');
-  print('..................................................');
-   print('..................................................');
-    print('..................................................');
-     print('..................................................');
-      print('..................................................');
-       print('..................................................');
-
-  final Uri uri = Uri.parse('$url/api/tags'); // Adjust endpoint as needed
-
-  try {
-    final response = await http.get(
-      uri,
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-    );
-
-    if (response.statusCode == 200) {
-      Map<String, dynamic> jsonData = json.decode(response.body);
-      List<dynamic> models = jsonData['models'];
-      List<String> modelNames =
-          models.map((model) => model['name'] as String).toList();
-
+      debugPrint("Error during message streaming: $e");
+    } finally {
+      await chatSessionsProvider.finalizeMessage(widget.sessionId);
       setState(() {
-        print("..........................");
-        print('Fetched models: $modelNames');
-        _modelOptions = modelNames;
-        _isModelListPossible = true;
-        if (_modelOptions.isNotEmpty) {
-          _defaultModel = _modelOptions[0];
-        }
+        _isLoading = false;
       });
-    } else {
-      debugPrint("Error in fetchTags: ${response.statusCode}");
+    }
+    _controller.clear();
+  }
+
+  Future<void> fetchTags(String url) async {
+    final Uri uri = Uri.parse('$url/tags'); // Adjust endpoint as needed
+
+    try {
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          // Removed CORS headers as they should be managed server-side
+        },
+      );
+
+      if (response.statusCode == 200) {
+        Map<String, dynamic> jsonData = json.decode(response.body);
+        List<dynamic> models = jsonData['models'];
+        List<String> modelNames =
+            models.map((model) => model['name'] as String).toList();
+
+        setState(() {
+          _modelOptions = modelNames;
+          _isModelListPossible = true;
+          if (_modelOptions.isNotEmpty) {
+            _defaultModel = _modelOptions[0];
+          }
+        });
+      } else {
+        debugPrint("Error in fetchTags: ${response.statusCode}");
+        setState(() {
+          _isModelListPossible = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Exception while fetching tags: $e");
       setState(() {
         _isModelListPossible = false;
       });
+    } finally {
+      // Save updated values in Hive
+      final box = Hive.box('settings');
+      await box.put('modelOptions', _modelOptions);
+      await box.put('defaultModel', _defaultModel);
+      await box.put('systemPrompt', _systemPrompt);
+      await box.put('serverURI', url);
     }
-  } catch (e) {
-    debugPrint("Exception while fetching tags: $e");
-    setState(() {
-      _isModelListPossible = false;
-    });
-  } finally {
-    // Save updated values in Hive
-    final box = Hive.box('settings');
-    await box.put('modelOptions', _modelOptions);
-    await box.put('defaultModel', _defaultModel);
-    await box.put('systemPrompt', _systemPrompt);
-    await box.put('serverURI', url);
   }
-}
 
   // --------------------------------------------------
   // 3D) Show popup of image upload options
@@ -949,14 +1022,15 @@ Future<void> fetchTags(String url) async {
                   fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
                 ),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
               if (_modelOptions.isNotEmpty)
                 DropdownButton<String>(
                   dropdownColor: isLight ? Colors.white : Colors.grey[800],
                   iconEnabledColor: iconColor,
                   value: _defaultModel.isNotEmpty
                       ? _defaultModel
-                      : _modelOptions[0],
+                      : (_modelOptions.isNotEmpty ? _modelOptions[0] : null),
+                  hint: const Text('Select Model'),
                   items: _modelOptions.map((String modelName) {
                     return DropdownMenuItem<String>(
                       value: modelName,
@@ -997,8 +1071,8 @@ Future<void> fetchTags(String url) async {
             ),
           ],
           bottomOpacity: 1,
-          shape: LinearBorder.bottom(
-            side: BorderSide(color: borderColor, width: 1.0),
+          shape: Border(
+            bottom: BorderSide(color: borderColor, width: 1.0),
           ),
         ),
         // Drawer: list out existing chat sessions
@@ -1241,39 +1315,40 @@ class _CopyCodeIconState extends State<CopyCodeIcon> {
 // --------------------------------------------------
 // 3) Custom CodeBlockBuilder
 // --------------------------------------------------
-class CodeBlockBuilder extends MarkdownElementBuilder {
-  @override
-  Widget? visitElementAfter(md.Element element, TextStyle? preferredStyle) {
-    final codeText = element.textContent;
+// Uncomment and modify if you want to customize code blocks in Markdown
+// class CodeBlockBuilder extends MarkdownElementBuilder {
+//   @override
+//   Widget? visitElementAfter(md.Element element, TextStyle? preferredStyle) {
+//     final codeText = element.textContent;
 
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Stack(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: SelectableText(
-              codeText,
-              style: const TextStyle(
-                color: Colors.white,
-                fontFamily: 'monospace',
-              ),
-            ),
-          ),
-          Positioned(
-            top: 0,
-            right: 0,
-            child: CopyCodeIcon(codeText: codeText),
-          ),
-        ],
-      ),
-    );
-  }
-}
+//     return Container(
+//       margin: const EdgeInsets.symmetric(vertical: 8),
+//       decoration: BoxDecoration(
+//         color: Colors.black,
+//         borderRadius: BorderRadius.circular(8),
+//       ),
+//       child: Stack(
+//         children: [
+//           Padding(
+//             padding: const EdgeInsets.all(12.0),
+//             child: SelectableText(
+//               codeText,
+//               style: const TextStyle(
+//                 color: Colors.white,
+//                 fontFamily: 'monospace',
+//               ),
+//             ),
+//           ),
+//           Positioned(
+//             top: 0,
+//             right: 0,
+//             child: CopyCodeIcon(codeText: codeText),
+//           ),
+//         ],
+//       ),
+//     );
+//   }
+// }
 
 // --------------------------------------------------
 // 4) ChatBubble widget
@@ -1311,9 +1386,10 @@ class ChatBubble extends StatelessWidget {
           codeblockDecoration: const BoxDecoration(),
           code: TextStyle(color: textColor, fontFamily: 'monospace'),
         ),
-        builders: {
-          'blockquote': CodeBlockBuilder(),
-        },
+        // Uncomment and modify to use custom builders
+        // builders: {
+        //   'blockquote': CodeBlockBuilder(),
+        // },
         onTapLink: (text, href, title) {
           if (href != null) {
             // Implement any link handling if needed
