@@ -24,11 +24,13 @@ class ChatSession {
   final String id;
   String title; // first user message
   List<ChatMessage> messages;
+  DateTime createdAt;
 
   ChatSession({
     required this.id,
     required this.title,
     required this.messages,
+    required this.createdAt,
   });
 
   // Convert to Map for saving into Hive
@@ -36,6 +38,7 @@ class ChatSession {
     return {
       'id': id,
       'title': title,
+      'createdAt': createdAt.toIso8601String(),
       'messages': messages
           .map((m) => {
                 'text': m.text,
@@ -51,6 +54,7 @@ class ChatSession {
     return ChatSession(
       id: map['id'],
       title: map['title'] ?? '',
+      createdAt: DateTime.parse(map['createdAt']),
       messages: (map['messages'] as List<dynamic>)
           .map((msg) => ChatMessage(
                 text: msg['text'] ?? '',
@@ -84,6 +88,8 @@ class ChatSessionsProvider extends ChangeNotifier {
       _sessions = stored
           .map((item) => ChatSession.fromMap(Map<String, dynamic>.from(item)))
           .toList();
+      // Sort sessions by createdAt descending
+      _sessions.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     } catch (e) {
       debugPrint('Error loading sessions from Hive: $e');
       _sessions = [];
@@ -105,8 +111,12 @@ class ChatSessionsProvider extends ChangeNotifier {
   // Create new session with blank messages
   Future<ChatSession> createNewSession() async {
     final newId = DateTime.now().millisecondsSinceEpoch.toString();
-    ChatSession newSession =
-        ChatSession(id: newId, title: 'Untitled', messages: []);
+    ChatSession newSession = ChatSession(
+      id: newId,
+      title: 'Untitled',
+      messages: [],
+      createdAt: DateTime.now(),
+    );
     _sessions.insert(0, newSession);
     await _saveSessionsToHive();
     notifyListeners();
@@ -157,6 +167,13 @@ class ChatSessionsProvider extends ChangeNotifier {
   // Finalize the streaming message
   Future<void> finalizeMessage(String sessionId) async {
     await _saveSessionsToHive();
+  }
+
+  // Delete all sessions
+  Future<void> deleteAllSessions() async {
+    _sessions.clear();
+    await _saveSessionsToHive();
+    notifyListeners();
   }
 }
 
@@ -314,7 +331,7 @@ class HomePage extends StatelessWidget {
           children: [
             Text(
               'Autarch - Chat Sessions',
-              style: GoogleFonts.roboto(
+              style: GoogleFonts.spaceMono(
                 color: textColor,
                 fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
               ),
@@ -689,24 +706,6 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 ],
                               ),
                               _isModelListPossible
-                                  // ? DropdownButton<String>(
-                                  //     value: tempSelectedModel.isNotEmpty
-                                  //         ? tempSelectedModel
-                                  //         : null,
-                                  //     hint: const Text('Select Model'),
-                                  //     onChanged: (String? newValue) {
-                                  //       if (newValue == null) return;
-                                  //       setStateDialog(() {
-                                  //         tempSelectedModel = newValue;
-                                  //       });
-                                  //     },
-                                  //     items: _modelOptions.map((String modelName) {
-                                  //       return DropdownMenuItem<String>(
-                                  //         value: modelName,
-                                  //         child: Text(modelName),
-                                  //       );
-                                  //     }).toList(),
-                                  //   )
                                   ? Row(
                                       children: [
                                         const Icon(Icons.check_circle,
@@ -802,9 +801,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                               final chatSessionsProvider =
                                   Provider.of<ChatSessionsProvider>(context,
                                       listen: false);
-                              chatSessionsProvider._sessions.clear();
-                              await chatSessionsProvider._saveSessionsToHive();
-                              chatSessionsProvider.notifyListeners();
+                              await chatSessionsProvider.deleteAllSessions();
                               Navigator.of(context).pop();
                             }
                           },
@@ -1017,9 +1014,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
             children: [
               Text(
                 'Autarch',
-                style: GoogleFonts.roboto(
+                style: GoogleFonts.spaceMono(
                   color: textColor,
-                  fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
+                  fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
                 ),
               ),
               const SizedBox(width: 12),
@@ -1075,7 +1072,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
             bottom: BorderSide(color: borderColor, width: 1.0),
           ),
         ),
-        // Drawer: list out existing chat sessions
+        // Drawer: list out existing chat sessions divided by days
         drawer: Drawer(
           child: Column(
             children: <Widget>[
@@ -1083,37 +1080,24 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                 child: ListView(
                   padding: EdgeInsets.zero,
                   children: [
-                    // Label
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8.0, left: 8.0),
-                      child: Text(
-                        'Your Chats',
-                        style: GoogleFonts.roboto(
-                          color: textColor,
-                          fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
-                        ),
+                    DrawerHeader(
+                      decoration: BoxDecoration(
+                        color: isLight ? Colors.blue : Colors.grey[800],
+                      ),
+                      child: Column(
+                        children: [
+                          Text(
+                            'Your Chats',
+                            style: GoogleFonts.spaceMono(
+                              color: Colors.white,
+                               fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
+                            ),
+                          ),
+                        ],
+                        
                       ),
                     ),
-                    const Divider(),
-                    for (final session in chatSessionsProvider.sessions)
-                      ListTile(
-                        title: Text(
-                          session.title == 'Untitled'
-                              ? '(New Chat)'
-                              : session.title,
-                          style: TextStyle(color: textColor),
-                        ),
-                        onTap: () {
-                          Navigator.pop(context); // close drawer
-                          Navigator.pushReplacement(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  OllamaChatPage(sessionId: session.id),
-                            ),
-                          );
-                        },
-                      ),
+                    ..._buildGroupedSessions(chatSessionsProvider.sessions, textColor, borderColor),
                   ],
                 ),
               ),
@@ -1197,6 +1181,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 decoration: InputDecoration(
                                   hintText: 'Write something...',
                                   hintStyle: TextStyle(
+                                    fontFamily: GoogleFonts.spaceMono().fontFamily,
+                                    fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
                                     color: textColor.withOpacity(0.6),
                                   ),
                                 ),
@@ -1242,6 +1228,85 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         ),
       ),
     );
+  }
+
+  List<Widget> _buildGroupedSessions(List<ChatSession> sessions, Color textColor, Color borderColor) {
+    Map<String, List<ChatSession>> grouped = {
+      'Today': [],
+      'Yesterday': [],
+      'Last 7 Days': [],
+      'Last 30 Days': [],
+      'Older': [],
+    };
+
+    DateTime now = DateTime.now();
+    for (var session in sessions) {
+      Duration diff = now.difference(session.createdAt);
+      if (diff.inDays == 0 &&
+          now.day == session.createdAt.day &&
+          now.month == session.createdAt.month &&
+          now.year == session.createdAt.year) {
+        grouped['Today']!.add(session);
+      } else if (diff.inDays == 1 ||
+          (diff.inDays < 1 && now.day != session.createdAt.day)) {
+        grouped['Yesterday']!.add(session);
+      } else if (diff.inDays <= 7) {
+        grouped['Last 7 Days']!.add(session);
+      } else if (diff.inDays <= 30) {
+        grouped['Last 30 Days']!.add(session);
+      } else {
+        grouped['Older']!.add(session);
+      }
+    }
+
+    List<Widget> widgets = [];
+    grouped.forEach((key, value) {
+      if (value.isNotEmpty) {
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: Text(
+              key,
+              style: GoogleFonts.spaceMono(
+                fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
+                fontWeight: FontWeight.bold,
+                color: textColor,
+              ),
+            ),
+          ),
+        );
+        for (var session in value) {
+          widgets.add(
+            ListTile(
+              title: Text(
+                session.title == 'Untitled' ? '(New Chat)' : session.title,
+                style: GoogleFonts.spaceMono(color: textColor, fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
+              ),
+              subtitle: Text(
+                _formatDate(session.createdAt),
+                style: GoogleFonts.spaceMono(color: textColor.withOpacity(0.6), fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
+              ),
+              onTap: () {
+                Navigator.pop(context); // close drawer
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => OllamaChatPage(sessionId: session.id),
+                  ),
+                );
+              },
+            ),
+          );
+          widgets.add(const Divider());
+        }
+      }
+    });
+
+    return widgets;
+  }
+
+  String _formatDate(DateTime date) {
+    return "${date.year}-${date.month.toString().padLeft(2,'0')}-${date.day.toString().padLeft(2,'0')} ${date.hour.toString().padLeft(2,'0')}:${date.minute.toString().padLeft(2,'0')}";
   }
 }
 
@@ -1384,7 +1449,7 @@ class ChatBubble extends StatelessWidget {
         styleSheet: MarkdownStyleSheet(
           p: TextStyle(color: textColor),
           codeblockDecoration: const BoxDecoration(),
-          code: TextStyle(color: textColor, fontFamily: 'monospace'),
+          code: GoogleFonts.spaceMono(),
         ),
         // Uncomment and modify to use custom builders
         // builders: {
