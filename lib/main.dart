@@ -690,6 +690,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                         // Default Model
                         GestureDetector(
                           onTap: () {
+                            print(_defaultModel);
+                            print(serverUriController.text);
                             Navigator.of(context).push(MaterialPageRoute(builder: (context) => ModelInformationPage(url: serverUriController.text, modelName: _defaultModel,)));
                           },
                           child: Row(
@@ -948,7 +950,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Add Images'),
+          title: Text('Add Images', style: GoogleFonts.spaceMono(fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize),),
           content: SingleChildScrollView(
             child: ListBody(
               children: <Widget>[
@@ -1019,31 +1021,37 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                   fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 25),
               if (_modelOptions.isNotEmpty)
-                DropdownButton<String>(
-                  dropdownColor: isLight ? Colors.white : Colors.grey[800],
-                  iconEnabledColor: iconColor,
-                  value: _defaultModel.isNotEmpty
-                      ? _defaultModel
-                      : (_modelOptions.isNotEmpty ? _modelOptions[0] : null),
-                  hint: const Text('Select Model'),
-                  items: _modelOptions.map((String modelName) {
-                    return DropdownMenuItem<String>(
-                      value: modelName,
-                      child: Text(modelName, style: TextStyle(color: textColor)),
-                    );
-                  }).toList(),
-                  onChanged: (String? newValue) async {
-                    if (newValue == null) return;
-                    setState(() {
-                      _defaultModel = newValue;
-                    });
-
-                    // Persist in Hive
-                    final box = Hive.box('settings');
-                    await box.put('defaultModel', _defaultModel);
-                  },
+                Container(
+                  width: 125,
+                  child: DropdownButton<String>(
+                    isDense: true,
+                    isExpanded: true,
+                    style: GoogleFonts.spaceMono(color: textColor,fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
+                    dropdownColor: isLight ? Colors.white : Colors.grey[800],
+                    iconEnabledColor: iconColor,
+                    value: _defaultModel.isNotEmpty
+                        ? _defaultModel
+                        : (_modelOptions.isNotEmpty ? _modelOptions[0] : null),
+                    hint: const Text('Select Model'),
+                    items: _modelOptions.map((String modelName) {
+                      return DropdownMenuItem<String>(
+                        value: modelName,
+                        child: Text(modelName, style: TextStyle(color: textColor)),
+                      );
+                    }).toList(),
+                    onChanged: (String? newValue) async {
+                      if (newValue == null) return;
+                      setState(() {
+                        _defaultModel = newValue;
+                      });
+                  
+                      // Persist in Hive
+                      final box = Hive.box('settings');
+                      await box.put('defaultModel', _defaultModel);
+                    },
+                  ),
                 ),
             ],
           ),
@@ -1080,23 +1088,24 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                 child: ListView(
                   padding: EdgeInsets.zero,
                   children: [
-                    DrawerHeader(
-                      decoration: BoxDecoration(
-                        color: isLight ? Colors.blue : Colors.grey[800],
-                      ),
-                      child: Column(
-                        children: [
-                          Text(
-                            'Your Chats',
-                            style: GoogleFonts.spaceMono(
-                              color: Colors.white,
-                               fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
-                            ),
-                          ),
-                        ],
+                    // DrawerHeader(
+                    //   decoration: BoxDecoration(
+                    //     color: isLight ? Colors.blue : Colors.grey[800],
+                    //   ),
+                    //   child: Column(
+                    //     children: [
+                    //       Text(
+                    //         'Your Chats',
+                    //         style: GoogleFonts.spaceMono(
+                    //           color: Colors.white,
+                    //            fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
+                    //         ),
+                    //       ),
+                    //     ],
                         
-                      ),
-                    ),
+                    //   ),
+                    // ),
+                    SizedBox(height: 16),
                     ..._buildGroupedSessions(chatSessionsProvider.sessions, textColor, borderColor),
                   ],
                 ),
@@ -1148,9 +1157,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
               // 2) Bottom input area
               Padding(
                 padding: EdgeInsets.only(
-                  left: kIsWeb ? 100.0 : 15.0,
-                  right: kIsWeb ? 100.0 : 15.0,
-                  bottom: kIsWeb ? 20.0 : 10.0,
+                  left: kIsWeb ? 100.0 : 8.0,
+                  right: kIsWeb ? 100.0 : 8.0,
+                  bottom: kIsWeb ? 20.0 : 4.0,
                 ),
                 child: Container(
                   color: isLight ? Colors.white : Colors.black87,
@@ -1164,7 +1173,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                           padding: const EdgeInsets.symmetric(horizontal: 8.0),
                           decoration: BoxDecoration(
                             border: Border.all(color: borderColor),
-                            borderRadius: BorderRadius.circular(8.0),
+                            borderRadius: BorderRadius.circular(0.0),
                           ),
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
@@ -1178,8 +1187,11 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 maxLines: 4,
                                 textAlignVertical: TextAlignVertical.top,
                                 style: TextStyle(color: textColor),
+                                cursorColor: textColor,
                                 decoration: InputDecoration(
                                   hintText: 'Write something...',
+                                  border: InputBorder.none,
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 5),
                                   hintStyle: TextStyle(
                                     fontFamily: GoogleFonts.spaceMono().fontFamily,
                                     fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
@@ -1187,8 +1199,6 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                   ),
                                 ),
                               ),
-                              const SizedBox(height: 8),
-
                               // Row of attach vs. send
                               Row(
                                 mainAxisAlignment:
@@ -1204,7 +1214,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
 
                                   // Send text
                                   IconButton(
-                                    iconSize: 38,
+                                    iconSize: 24,
                                     icon: !_isLoading
                                         ? Icon(Icons.arrow_circle_right_outlined,
                                             color: iconColor)
