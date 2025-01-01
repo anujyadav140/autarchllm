@@ -155,14 +155,24 @@ class ChatSessionsProvider extends ChangeNotifier {
 // --------------------------------------------------
 class SettingsProvider extends ChangeNotifier {
   String _ollamaServerURI;
+  String _systemPrompt;
 
-  SettingsProvider({required String initialOllamaServerURI})
-      : _ollamaServerURI = initialOllamaServerURI;
+  SettingsProvider({
+    required String initialOllamaServerURI,
+    required String initialSystemPrompt,
+  })  : _ollamaServerURI = initialOllamaServerURI,
+        _systemPrompt = initialSystemPrompt;
 
   String get ollamaServerURI => _ollamaServerURI;
+  String get systemPrompt => _systemPrompt;
 
   set ollamaServerURI(String val) {
     _ollamaServerURI = val;
+    notifyListeners();
+  }
+
+  set systemPrompt(String val) {
+    _systemPrompt = val;
     notifyListeners();
   }
 }
@@ -211,7 +221,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(
           create: (_) => SettingsProvider(
-            initialOllamaServerURI: savedServerURI,
+            initialOllamaServerURI: savedServerURI, initialSystemPrompt: 'Be nice',
           ),
         ),
         ChangeNotifierProvider(
@@ -365,42 +375,35 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   late OllamaClient client;
   late bool _isModelListPossible = false;
 
-@override
-void initState() {
-  super.initState();
+ @override
+  void initState() {
+    super.initState();
+    print(_defaultModel);
+    final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
+    _systemPrompt = settingsProvider.systemPrompt;
+    serverURI = settingsProvider.ollamaServerURI;
 
-  final box = Hive.box('settings');
-  final savedModelOptions = box.get('modelOptions', defaultValue: []);
-  final savedDefaultModel = box.get('defaultModel', defaultValue: '');
-  final savedSystemPrompt = box.get('systemPrompt', defaultValue: '');
-  final savedServerURI = box.get('serverURI', defaultValue: '');
+    // Define a default URI
+    const String defaultURI = 'https://default.server.com';
 
-  _modelOptions.addAll((savedModelOptions as List).cast<String>());
-  _defaultModel = savedDefaultModel;
-  _systemPrompt = savedSystemPrompt;
-  serverURI = savedServerURI;
+    // Use the provided URI or fallback to the default
+    final uriToUse = serverURI.isNotEmpty ? serverURI : defaultURI;
 
-  final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
+    // Ensure '/api' is appended only once
+    final baseUri = uriToUse.endsWith('/api') ? uriToUse : '$uriToUse/api';
+
+    client = OllamaClient(baseUrl: baseUri);
+
+    // Load the session from ChatSessionsProvider
+    final chatSessionsProvider =
+        Provider.of<ChatSessionsProvider>(context, listen: false);
+    _currentSession = chatSessionsProvider.getSessionById(widget.sessionId);
+
+    // Fetch model options after initializing the client
+    fetchTags(baseUri);
+  }
 
 
-  // Define a default URI
-  const String defaultURI = 'https://default.server.com/api';
-
-  // Use the provided URI or fallback to the default
-  final uriToUse = settingsProvider.ollamaServerURI.isNotEmpty
-      ? settingsProvider.ollamaServerURI
-      : defaultURI;
-  print("----------------------------------------");
-  print(settingsProvider.ollamaServerURI);
-  print(uriToUse);
-  client = OllamaClient(baseUrl: uriToUse);
-  print(client.baseUrl);
-
-  // Load the session from ChatSessionsProvider
-  final chatSessionsProvider =
-      Provider.of<ChatSessionsProvider>(context, listen: false);
-  _currentSession = chatSessionsProvider.getSessionById(widget.sessionId);
-}
 
 
   Future<void> clearHiveBox() async {
@@ -754,118 +757,118 @@ void initState() {
   // --------------------------------------------------
   // 3C) Streaming chat
   // --------------------------------------------------
-  Future<void> _sendMessage(String messageText) async {
+Future<void> _sendMessage(String messageText) async {
+  if (messageText.isEmpty) return;
+  setState(() {
+    _isLoading = true;
+  });
 
-    if (messageText.isEmpty) return;
-    setState(() {
-      _isLoading = true;
-    });
+  // Access the existing SettingsProvider
+  final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
+  _defaultModel = Hive.box('settings').get('defaultModel', defaultValue: '');
 
-    // Re-load the default model from Hive right before sending
-    final box = Hive.box('settings');
-    _defaultModel = box.get('defaultModel', defaultValue: '');
+  // Add user message to the session
+  final chatSessionsProvider =
+      Provider.of<ChatSessionsProvider>(context, listen: false);
+  await chatSessionsProvider.addMessage(
+    sessionId: widget.sessionId,
+    message: ChatMessage(text: messageText, isUser: true),
+  );
 
-    // Add user message to the session
-    final chatSessionsProvider =
-        Provider.of<ChatSessionsProvider>(context, listen: false);
-    await chatSessionsProvider.addMessage(
-      sessionId: widget.sessionId,
-      message: ChatMessage(text: messageText, isUser: true),
-    );
+  // Create an empty botMessage to hold partial tokens
+  final botMessage = ChatMessage(text: '', isUser: false);
+  await chatSessionsProvider.addMessage(
+    sessionId: widget.sessionId,
+    message: botMessage,
+  );
 
-    // Create an empty botMessage to hold partial tokens
-    // so we can update it as streaming tokens arrive
-    final botMessage = ChatMessage(text: '', isUser: false);
-    await chatSessionsProvider.addMessage(
-      sessionId: widget.sessionId,
-      message: botMessage,
-    );
+  final stream = client.generateCompletionStream(
+    request: GenerateCompletionRequest(
+      model: _defaultModel,
+      prompt: settingsProvider.systemPrompt.isNotEmpty
+          ? "${settingsProvider.systemPrompt}\n\nUser: $messageText"
+          : messageText,
+    ),
+  );
 
-    final stream = client.generateCompletionStream(
-      request: GenerateCompletionRequest(
-        model: _defaultModel,
-        prompt: _systemPrompt.isNotEmpty
-            ? "$_systemPrompt\n\nUser: $messageText"
-            : messageText,
-      ),
-    );
-
-    print(_defaultModel);
-    print(_systemPrompt);
-    print(serverURI);
-    print(messageText);
-    print("..........................................");
-    print(client.baseUrl);
-    print("..........................................");
-
-    try {
-      await for (final res in stream) {
-        print(res);
-        // Append partial tokens
-        final newText = botMessage.text + (res.response ?? '');
-        await chatSessionsProvider.updateLastBotMessage(
-          sessionId: widget.sessionId,
-          newText: newText,
-        );
-      }
-    } catch (e) {
+  try {
+    await for (final res in stream) {
+      final newText = botMessage.text + (res.response ?? '');
       await chatSessionsProvider.updateLastBotMessage(
         sessionId: widget.sessionId,
-        newText: 'Error: Possibly no server endpoint',
+        newText: newText,
       );
-    } finally {
-      await chatSessionsProvider.finalizeMessage(widget.sessionId);
-      setState(() {
-        _isLoading = false;
-      });
     }
-    _controller.clear();
+  } catch (e) {
+    await chatSessionsProvider.updateLastBotMessage(
+      sessionId: widget.sessionId,
+      newText: 'Error: $e',
+    );
+  } finally {
+    await chatSessionsProvider.finalizeMessage(widget.sessionId);
+    setState(() {
+      _isLoading = false;
+    });
   }
+  _controller.clear();
+}
 
-  Future<void> fetchTags(String url) async {
-    final Uri uri = Uri.parse('$url/api/tags');
 
-    try {
-      final response = await http.get(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
-          'Access-Control-Allow-Origin': 'https://autarch-llm.web.app/',
-          'Access-Control-Allow-Methods': 'GET, POST',
-          "Access-Control-Allow-Headers":
-              "Origin, X-Requested-With, Content-Type, Accept, Authorization"
-        },
-      );
+Future<void> fetchTags(String url) async {
+  print('Fetching tags from: $url');
+  print('..................................................');
+   print('..................................................');
+    print('..................................................');
+     print('..................................................');
+      print('..................................................');
+       print('..................................................');
 
-      if (response.statusCode == 200) {
-        Map<String, dynamic> jsonData = json.decode(response.body);
-        List<dynamic> models = jsonData['models'];
-        List<String> modelNames =
-            models.map((model) => model['name'] as String).toList();
+  final Uri uri = Uri.parse('$url/api/tags'); // Adjust endpoint as needed
 
+  try {
+    final response = await http.get(
+      uri,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    );
+
+    if (response.statusCode == 200) {
+      Map<String, dynamic> jsonData = json.decode(response.body);
+      List<dynamic> models = jsonData['models'];
+      List<String> modelNames =
+          models.map((model) => model['name'] as String).toList();
+
+      setState(() {
+        print("..........................");
+        print('Fetched models: $modelNames');
         _modelOptions = modelNames;
-        setState(() {
-          _isModelListPossible = true;
-        });
+        _isModelListPossible = true;
         if (_modelOptions.isNotEmpty) {
           _defaultModel = _modelOptions[0];
         }
-      } else {
-        debugPrint("error in fetchTags: ${response.statusCode}");
-      }
-    } catch (e) {
-      debugPrint("Exception while fetching tags: $e");
-    } finally {
-      // Save updated values in Hive
-      final box = Hive.box('settings');
-      await box.put('modelOptions', _modelOptions);
-      await box.put('defaultModel', _defaultModel);
-      await box.put('systemPrompt', _systemPrompt);
-      await box.put('serverURI', serverURI);
+      });
+    } else {
+      debugPrint("Error in fetchTags: ${response.statusCode}");
+      setState(() {
+        _isModelListPossible = false;
+      });
     }
+  } catch (e) {
+    debugPrint("Exception while fetching tags: $e");
+    setState(() {
+      _isModelListPossible = false;
+    });
+  } finally {
+    // Save updated values in Hive
+    final box = Hive.box('settings');
+    await box.put('modelOptions', _modelOptions);
+    await box.put('defaultModel', _defaultModel);
+    await box.put('systemPrompt', _systemPrompt);
+    await box.put('serverURI', url);
   }
+}
 
   // --------------------------------------------------
   // 3D) Show popup of image upload options
