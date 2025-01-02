@@ -442,6 +442,11 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
 
     // Fetch model options after initializing the client
     fetchTags(baseUri);
+
+    // Auto-scroll after the first frame is rendered
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToBottom();
+    });
   }
 
   @override
@@ -845,555 +850,555 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     );
   }
 
-    // --------------------------------------------------
-    // 3C) Streaming chat
-    // --------------------------------------------------
-    Future<void> _sendMessage(String messageText) async {
-      // Prevent sending if there's no text and no pending images
-      if (messageText.trim().isEmpty && _pendingImages.isEmpty) return;
+  // --------------------------------------------------
+  // 3C) Streaming chat
+  // --------------------------------------------------
+  Future<void> _sendMessage(String messageText) async {
+    // Prevent sending if there's no text and no pending images
+    if (messageText.trim().isEmpty && _pendingImages.isEmpty) return;
 
-      setState(() {
-        _isLoading = true;
-      });
+    setState(() {
+      _isLoading = true;
+    });
 
-      // Access the existing SettingsProvider
-      final settingsProvider =
-          Provider.of<SettingsProvider>(context, listen: false);
-      _defaultModel = Hive.box('settings').get('defaultModel', defaultValue: '');
+    // Access the existing SettingsProvider
+    final settingsProvider =
+        Provider.of<SettingsProvider>(context, listen: false);
+    _defaultModel = Hive.box('settings').get('defaultModel', defaultValue: '');
 
-      final chatSessionsProvider =
-          Provider.of<ChatSessionsProvider>(context, listen: false);
+    final chatSessionsProvider =
+        Provider.of<ChatSessionsProvider>(context, listen: false);
 
-      // Add user text message if any
-      if (messageText.trim().isNotEmpty) {
-        await chatSessionsProvider.addMessage(
-          sessionId: widget.sessionId,
-          message: ChatMessage(text: messageText.trim(), isUser: true),
-        );
-        _scrollToBottom(); // Scroll after adding user message
-      }
-
-      // Add pending images as user messages
-      for (var imageData in _pendingImages) {
-        await chatSessionsProvider.addMessage(
-          sessionId: widget.sessionId,
-          message: ChatMessage(text: '', imageData: imageData, isUser: true),
-        );
-        _scrollToBottom(); // Scroll after adding each image
-      }
-
-      // Create an empty botMessage to hold partial tokens
-      final botMessage = ChatMessage(text: '', isUser: false);
+    // Add user text message if any
+    if (messageText.trim().isNotEmpty) {
       await chatSessionsProvider.addMessage(
         sessionId: widget.sessionId,
-        message: botMessage,
+        message: ChatMessage(text: messageText.trim(), isUser: true),
       );
-      _scrollToBottom(); // Scroll after adding bot message
-
-      final prompt = settingsProvider.systemPrompt.isNotEmpty
-          ? "${settingsProvider.systemPrompt}\n\nUser: $messageText"
-          : messageText;
-
-      final stream = client.generateCompletionStream(
-        request: GenerateCompletionRequest(
-          model: _defaultModel,
-          prompt: prompt,
-          images: _pendingImages.map((image) => base64Encode(image!)).toList(),
-        ),
-      );
-
-      print("Using Model: $_defaultModel");
-      print("System Prompt: ${settingsProvider.systemPrompt}");
-      print("Server URI: ${client.baseUrl}");
-      print("User Message: $messageText");
-      _pendingImages.clear(); // Clear pending images after sending
-      try {
-        await for (final res in stream) {
-          print(res);
-          // Append partial tokens
-          final newText = botMessage.text + (res.response ?? '');
-          await chatSessionsProvider.updateLastBotMessage(
-            sessionId: widget.sessionId,
-            newText: newText,
-          );
-          _scrollToBottom(); // Scroll after updating bot message
-        }
-      } catch (e) {
-        await chatSessionsProvider.updateLastBotMessage(
-          sessionId: widget.sessionId,
-          newText: 'Error: Possibly no server endpoint or invalid response.',
-        );
-        debugPrint("Error during message streaming: $e");
-        _scrollToBottom(); // Scroll after error message
-      } finally {
-        await chatSessionsProvider.finalizeMessage(widget.sessionId);
-        setState(() {
-          _isLoading = false;
-          _pendingImages.clear(); // Clear pending images after sending
-        });
-      }
-      _controller.clear();
+      _scrollToBottom(); // Scroll after adding user message
     }
 
-    Future<void> fetchTags(String url) async {
-      final Uri uri = Uri.parse('$url/tags'); // Adjust endpoint as needed
+    // Add pending images as user messages
+    for (var imageData in _pendingImages) {
+      await chatSessionsProvider.addMessage(
+        sessionId: widget.sessionId,
+        message: ChatMessage(text: '', imageData: imageData, isUser: true),
+      );
+      _scrollToBottom(); // Scroll after adding each image
+    }
 
-      try {
-        final response = await http.get(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            // Removed CORS headers as they should be managed server-side
-          },
+    // Create an empty botMessage to hold partial tokens
+    final botMessage = ChatMessage(text: '', isUser: false);
+    await chatSessionsProvider.addMessage(
+      sessionId: widget.sessionId,
+      message: botMessage,
+    );
+    _scrollToBottom(); // Scroll after adding bot message
+
+    final prompt = settingsProvider.systemPrompt.isNotEmpty
+        ? "${settingsProvider.systemPrompt}\n\nUser: $messageText"
+        : messageText;
+
+    final stream = client.generateCompletionStream(
+      request: GenerateCompletionRequest(
+        model: _defaultModel,
+        prompt: prompt,
+        images: _pendingImages.map((image) => base64Encode(image!)).toList(),
+      ),
+    );
+
+    print("Using Model: $_defaultModel");
+    print("System Prompt: ${settingsProvider.systemPrompt}");
+    print("Server URI: ${client.baseUrl}");
+    print("User Message: $messageText");
+    _pendingImages.clear(); // Clear pending images after sending
+    try {
+      await for (final res in stream) {
+        print(res);
+        // Append partial tokens
+        final newText = botMessage.text + (res.response ?? '');
+        await chatSessionsProvider.updateLastBotMessage(
+          sessionId: widget.sessionId,
+          newText: newText,
         );
+        _scrollToBottom(); // Scroll after updating bot message
+      }
+    } catch (e) {
+      await chatSessionsProvider.updateLastBotMessage(
+        sessionId: widget.sessionId,
+        newText: 'Error: Possibly no server endpoint or invalid response.',
+      );
+      debugPrint("Error during message streaming: $e");
+      _scrollToBottom(); // Scroll after error message
+    } finally {
+      await chatSessionsProvider.finalizeMessage(widget.sessionId);
+      setState(() {
+        _isLoading = false;
+        _pendingImages.clear(); // Clear pending images after sending
+      });
+    }
+    _controller.clear();
+  }
 
-        if (response.statusCode == 200) {
-          Map<String, dynamic> jsonData = json.decode(response.body);
-          List<dynamic> models = jsonData['models'];
-          List<String> modelNames =
-              models.map((model) => model['name'] as String).toList();
+  Future<void> fetchTags(String url) async {
+    final Uri uri = Uri.parse('$url/tags'); // Adjust endpoint as needed
 
-          setState(() {
-            _modelOptions = modelNames;
-            _isModelListPossible = true;
-            if (_modelOptions.isNotEmpty) {
-              _defaultModel = _modelOptions[0];
-            }
-          });
-        } else {
-          debugPrint("Error in fetchTags: ${response.statusCode}");
-          setState(() {
-            _isModelListPossible = false;
-          });
-        }
-      } catch (e) {
-        debugPrint("Exception while fetching tags: $e");
+    try {
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          // Removed CORS headers as they should be managed server-side
+        },
+      );
+
+      if (response.statusCode == 200) {
+        Map<String, dynamic> jsonData = json.decode(response.body);
+        List<dynamic> models = jsonData['models'];
+        List<String> modelNames =
+            models.map((model) => model['name'] as String).toList();
+
+        setState(() {
+          _modelOptions = modelNames;
+          _isModelListPossible = true;
+          if (_modelOptions.isNotEmpty) {
+            _defaultModel = _modelOptions[0];
+          }
+        });
+      } else {
+        debugPrint("Error in fetchTags: ${response.statusCode}");
         setState(() {
           _isModelListPossible = false;
         });
-      } finally {
-        // Save updated values in Hive
-        final box = Hive.box('settings');
-        await box.put('modelOptions', _modelOptions);
-        await box.put('defaultModel', _defaultModel);
-        await box.put('systemPrompt', _systemPrompt);
-        await box.put('serverURI', url);
       }
+    } catch (e) {
+      debugPrint("Exception while fetching tags: $e");
+      setState(() {
+        _isModelListPossible = false;
+      });
+    } finally {
+      // Save updated values in Hive
+      final box = Hive.box('settings');
+      await box.put('modelOptions', _modelOptions);
+      await box.put('defaultModel', _defaultModel);
+      await box.put('systemPrompt', _systemPrompt);
+      await box.put('serverURI', url);
     }
+  }
 
-    // --------------------------------------------------
-    // 3D) Show popup of image upload options
-    // --------------------------------------------------
-    void _showImageOptionsDialog() {
-      showDialog(
-        context: context,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            title: Text('Add Images', style: GoogleFonts.spaceMono(fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize),),
-            content: SingleChildScrollView(
-              child: ListBody(
-                children: <Widget>[
-                  // 1) Upload from gallery
-                  ListTile(
-                    leading: const Icon(Icons.image),
-                    title: const Text('Upload Image'),
-                    onTap: () async {
-                      Navigator.of(context).pop();
-                      await _pickImageFromGallery();
-                    },
-                  ),
-                  // 2) Take Photo (mobile only)
-                  if (!kIsWeb)
-                    ListTile(
-                      leading: const Icon(Icons.camera_alt),
-                      title: const Text('Take Photo'),
-                      onTap: () async {
-                        Navigator.of(context).pop();
-                        await _takePhoto();
-                      },
-                    ),
-                  // 3) Upload any file
-                  ListTile(
-                    leading: const Icon(Icons.attach_file),
-                    title: const Text('Upload File'),
-                    onTap: () async {
-                      Navigator.of(context).pop();
-                      await _pickFile();
-                    },
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      );
-    }
-
-    // --------------------------------------------------
-    // 4) Build UI
-    // --------------------------------------------------
-    @override
-    Widget build(BuildContext context) {
-      final themeProvider = context.watch<ThemeProvider>();
-      final isLight = themeProvider.isLightMode;
-
-      final appBarColor = isLight ? Colors.white : Colors.black;
-      final iconColor = isLight ? Colors.black : Colors.white;
-      final textColor = isLight ? Colors.black : Colors.white;
-      final borderColor = isLight ? Colors.black : Colors.white;
-
-      // Re-fetch the current session from provider in case it changed
-      final chatSessionsProvider = context.watch<ChatSessionsProvider>();
-      _currentSession = chatSessionsProvider.getSessionById(widget.sessionId);
-
-      return SafeArea(
-        child: Scaffold(
-          appBar: AppBar(
-            backgroundColor: appBarColor,
-            iconTheme: IconThemeData(color: iconColor),
-            title: Row(
-              children: [
-                Text(
-                  'Autarch',
-                  style: GoogleFonts.spaceMono(
-                    color: textColor,
-                    fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
-                  ),
+  // --------------------------------------------------
+  // 3D) Show popup of image upload options
+  // --------------------------------------------------
+  void _showImageOptionsDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Add Images', style: GoogleFonts.spaceMono(fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize),),
+          content: SingleChildScrollView(
+            child: ListBody(
+              children: <Widget>[
+                // 1) Upload from gallery
+                ListTile(
+                  leading: const Icon(Icons.image),
+                  title: const Text('Upload Image'),
+                  onTap: () async {
+                    Navigator.of(context).pop();
+                    await _pickImageFromGallery();
+                  },
                 ),
-                const SizedBox(width: 25),
-                if (_modelOptions.isNotEmpty)
-                  Container(
-                    width: 125,
-                    child: DropdownButton<String>(
-                      isDense: true,
-                      isExpanded: true,
-                      style: GoogleFonts.spaceMono(color: textColor,fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
-                      dropdownColor: isLight ? Colors.white : Colors.grey[800],
-                      iconEnabledColor: iconColor,
-                      value: _defaultModel.isNotEmpty
-                          ? _defaultModel
-                          : (_modelOptions.isNotEmpty ? _modelOptions[0] : null),
-                      hint: const Text('Select Model'),
-                      items: _modelOptions.map((String modelName) {
-                        return DropdownMenuItem<String>(
-                          value: modelName,
-                          child: Text(modelName, style: TextStyle(color: textColor)),
-                        );
-                      }).toList(),
-                      onChanged: (String? newValue) async {
-                        if (newValue == null) return;
-                        setState(() {
-                          _defaultModel = newValue;
-                        });
-                    
-                        // Persist in Hive
-                        final box = Hive.box('settings');
-                        await box.put('defaultModel', _defaultModel);
-                        _scrollToBottom(); // Scroll after changing model
-                      },
-                    ),
+                // 2) Take Photo (mobile only)
+                if (!kIsWeb)
+                  ListTile(
+                    leading: const Icon(Icons.camera_alt),
+                    title: const Text('Take Photo'),
+                    onTap: () async {
+                      Navigator.of(context).pop();
+                      await _takePhoto();
+                    },
                   ),
+                // 3) Upload any file
+                ListTile(
+                  leading: const Icon(Icons.attach_file),
+                  title: const Text('Upload File'),
+                  onTap: () async {
+                    Navigator.of(context).pop();
+                    await _pickFile();
+                  },
+                ),
               ],
             ),
-            // The "New Chat Page" icon in *this* page can also open a fresh chat
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.edit_document),
-                onPressed: () async {
-                  // Create a new session
-                  final newSession =
-                      await chatSessionsProvider.createNewSession();
-                  if (context.mounted) {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            OllamaChatPage(sessionId: newSession.id),
-                      ),
-                    );
-                  }
-                },
+          ),
+        );
+      },
+    );
+  }
+
+  // --------------------------------------------------
+  // 4) Build UI
+  // --------------------------------------------------
+  @override
+  Widget build(BuildContext context) {
+    final themeProvider = context.watch<ThemeProvider>();
+    final isLight = themeProvider.isLightMode;
+
+    final appBarColor = isLight ? Colors.white : Colors.black;
+    final iconColor = isLight ? Colors.black : Colors.white;
+    final textColor = isLight ? Colors.black : Colors.white;
+    final borderColor = isLight ? Colors.black : Colors.white;
+
+    // Re-fetch the current session from provider in case it changed
+    final chatSessionsProvider = context.watch<ChatSessionsProvider>();
+    _currentSession = chatSessionsProvider.getSessionById(widget.sessionId);
+
+    return SafeArea(
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: appBarColor,
+          iconTheme: IconThemeData(color: iconColor),
+          title: Row(
+            children: [
+              Text(
+                'Autarch',
+                style: GoogleFonts.spaceMono(
+                  color: textColor,
+                  fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
+                ),
+              ),
+              const SizedBox(width: 25),
+              if (_modelOptions.isNotEmpty)
+                SizedBox(
+                  width: 125,
+                  child: DropdownButton<String>(
+                    isDense: true,
+                    isExpanded: true,
+                    style: GoogleFonts.spaceMono(color: textColor,fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
+                    dropdownColor: isLight ? Colors.white : Colors.grey[800],
+                    iconEnabledColor: iconColor,
+                    value: _defaultModel.isNotEmpty
+                        ? _defaultModel
+                        : (_modelOptions.isNotEmpty ? _modelOptions[0] : null),
+                    hint: const Text('Select Model'),
+                    items: _modelOptions.map((String modelName) {
+                      return DropdownMenuItem<String>(
+                        value: modelName,
+                        child: Text(modelName, style: TextStyle(color: textColor)),
+                      );
+                    }).toList(),
+                    onChanged: (String? newValue) async {
+                      if (newValue == null) return;
+                      setState(() {
+                        _defaultModel = newValue;
+                      });
+                  
+                      // Persist in Hive
+                      final box = Hive.box('settings');
+                      await box.put('defaultModel', _defaultModel);
+                      _scrollToBottom(); // Scroll after changing model
+                    },
+                  ),
+                ),
+            ],
+          ),
+          // The "New Chat Page" icon in *this* page can also open a fresh chat
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.edit_document),
+              onPressed: () async {
+                // Create a new session
+                final newSession =
+                    await chatSessionsProvider.createNewSession();
+                if (context.mounted) {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) =>
+                          OllamaChatPage(sessionId: newSession.id),
+                    ),
+                  );
+                }
+              },
+            ),
+          ],
+          bottomOpacity: 1,
+          shape: Border(
+            bottom: BorderSide(color: borderColor, width: 1.0),
+          ),
+        ),
+        // Drawer: list out existing chat sessions divided by days
+        drawer: Drawer(
+          child: Column(
+            children: <Widget>[
+              Expanded(
+                child: ListView(
+                  padding: EdgeInsets.zero,
+                  children: [
+                    // DrawerHeader can be customized if needed
+                    SizedBox(height: 16),
+                    ..._buildGroupedSessions(chatSessionsProvider.sessions, textColor, borderColor),
+                  ],
+                ),
+              ),
+              const Divider(),
+              Container(
+                alignment: Alignment.center,
+                margin: const EdgeInsets.only(bottom: 16.0, right: 16.0),
+                child: TextButton(
+                  style: TextButton.styleFrom(
+                    foregroundColor: textColor,
+                    side: BorderSide(color: borderColor, width: 0),
+                    shape: const RoundedRectangleBorder(
+                      borderRadius: BorderRadius.zero,
+                    ),
+                  ),
+                  onPressed: _openSettingsDialog,
+                  child: const Text('Settings'),
+                ),
               ),
             ],
-            bottomOpacity: 1,
-            shape: Border(
-              bottom: BorderSide(color: borderColor, width: 1.0),
-            ),
           ),
-          // Drawer: list out existing chat sessions divided by days
-          drawer: Drawer(
-            child: Column(
-              children: <Widget>[
-                Expanded(
-                  child: ListView(
-                    padding: EdgeInsets.zero,
+        ),
+        body: SelectionArea(
+          child: Column(
+            children: [
+              // 1) Messages area
+              Expanded(
+                child: Container(
+                  color: isLight ? Colors.white : const Color(0xFF1B1B1D),
+                  padding: EdgeInsets.only(
+                    left: kIsWeb ? 100.0 : 15.0,
+                    right: kIsWeb ? 100.0 : 15.0,
+                    top: kIsWeb ? 20.0 : 10.0,
+                  ),
+                  child: ListView.builder(
+                    controller: _scrollController, // Attach ScrollController
+                    padding: const EdgeInsets.all(8.0),
+                    itemCount: _currentSession?.messages.length ?? 0,
+                    itemBuilder: (context, index) {
+                      final message = _currentSession!.messages[index];
+                      return ChatBubble(message: message, isLight: isLight);
+                    },
+                  ),
+                ),
+              ),
+
+              // ** New: Display pending images above the textfield **
+              if (_pendingImages.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 15.0, vertical: 5.0),
+                  height: 100,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _pendingImages.length,
+                    itemBuilder: (context, index) {
+                      return Stack(
+                        children: [
+                          Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 5.0),
+                            child: Image.memory(
+                              _pendingImages[index]!,
+                              width: 80,
+                              height: 80,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                          Positioned(
+                            top: 0,
+                            right: 5,
+                            child: GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _pendingImages.removeAt(index);
+                                });
+                                _scrollToBottom(); // Scroll after removing image
+                              },
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.close,
+                                  size: 20,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+
+              if (_isLoading) const LinearProgressIndicator(),
+
+              // 2) Bottom input area
+              Padding(
+                padding: EdgeInsets.only(
+                  left: kIsWeb ? 100.0 : 8.0,
+                  right: kIsWeb ? 100.0 : 8.0,
+                  bottom: kIsWeb ? 20.0 : 4.0,
+                ),
+                child: Container(
+                  color: isLight ? Colors.white : Colors.black87,
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      // DrawerHeader can be customized if needed
-                      SizedBox(height: 16),
-                      ..._buildGroupedSessions(chatSessionsProvider.sessions, textColor, borderColor),
+                      // The expanded Column
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: borderColor),
+                            borderRadius: BorderRadius.circular(0.0),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // The TextField
+                              TextField(
+                                controller: _controller,
+                                onSubmitted: _sendMessage,
+                                minLines: 1,
+                                maxLines: 4,
+                                textAlignVertical: TextAlignVertical.top,
+                                style: TextStyle(color: textColor),
+                                cursorColor: textColor,
+                                decoration: InputDecoration(
+                                  hintText: 'Write something...',
+                                  border: InputBorder.none,
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 5),
+                                  hintStyle: TextStyle(
+                                    fontFamily: GoogleFonts.spaceMono().fontFamily,
+                                    fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
+                                    color: textColor.withOpacity(0.6),
+                                  ),
+                                ),
+                              ),
+                              // Row of attach vs. send
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  // Attach files/images
+                                  IconButton(
+                                    icon: Icon(Icons.attach_file,
+                                        color: iconColor),
+                                    tooltip: 'Upload files/images',
+                                    onPressed: _showImageOptionsDialog,
+                                  ),
+
+                                  // Send text and images
+                                  IconButton(
+                                    iconSize: 24,
+                                    icon: !_isLoading
+                                        ? Icon(Icons.arrow_circle_right_outlined,
+                                            color: iconColor)
+                                        : Icon(Icons.hourglass_top,
+                                            color: iconColor),
+                                    onPressed: () =>
+                                        _sendMessage(_controller.text),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                const Divider(),
-                Container(
-                  alignment: Alignment.center,
-                  margin: const EdgeInsets.only(bottom: 16.0, right: 16.0),
-                  child: TextButton(
-                    style: TextButton.styleFrom(
-                      foregroundColor: textColor,
-                      side: BorderSide(color: borderColor, width: 0),
-                      shape: const RoundedRectangleBorder(
-                        borderRadius: BorderRadius.zero,
-                      ),
-                    ),
-                    onPressed: _openSettingsDialog,
-                    child: const Text('Settings'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          body: SelectionArea(
-            child: Column(
-              children: [
-                // 1) Messages area
-                Expanded(
-                  child: Container(
-                    color: isLight ? Colors.white : const Color(0xFF1B1B1D),
-                    padding: EdgeInsets.only(
-                      left: kIsWeb ? 100.0 : 15.0,
-                      right: kIsWeb ? 100.0 : 15.0,
-                      top: kIsWeb ? 20.0 : 10.0,
-                    ),
-                    child: ListView.builder(
-                      controller: _scrollController, // Attach ScrollController
-                      padding: const EdgeInsets.all(8.0),
-                      itemCount: _currentSession?.messages.length ?? 0,
-                      itemBuilder: (context, index) {
-                        final message = _currentSession!.messages[index];
-                        return ChatBubble(message: message, isLight: isLight);
-                      },
-                    ),
-                  ),
-                ),
-
-                // ** New: Display pending images above the textfield **
-                if (_pendingImages.isNotEmpty)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 15.0, vertical: 5.0),
-                    height: 100,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _pendingImages.length,
-                      itemBuilder: (context, index) {
-                        return Stack(
-                          children: [
-                            Container(
-                              margin: const EdgeInsets.symmetric(horizontal: 5.0),
-                              child: Image.memory(
-                                _pendingImages[index]!,
-                                width: 80,
-                                height: 80,
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                            Positioned(
-                              top: 0,
-                              right: 5,
-                              child: GestureDetector(
-                                onTap: () {
-                                  setState(() {
-                                    _pendingImages.removeAt(index);
-                                  });
-                                  _scrollToBottom(); // Scroll after removing image
-                                },
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.black54,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Icon(
-                                    Icons.close,
-                                    size: 20,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-
-                if (_isLoading) const LinearProgressIndicator(),
-
-                // 2) Bottom input area
-                Padding(
-                  padding: EdgeInsets.only(
-                    left: kIsWeb ? 100.0 : 8.0,
-                    right: kIsWeb ? 100.0 : 8.0,
-                    bottom: kIsWeb ? 20.0 : 4.0,
-                  ),
-                  child: Container(
-                    color: isLight ? Colors.white : Colors.black87,
-                    padding: const EdgeInsets.symmetric(vertical: 8.0),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        // The expanded Column
-                        Expanded(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                            decoration: BoxDecoration(
-                              border: Border.all(color: borderColor),
-                              borderRadius: BorderRadius.circular(0.0),
-                            ),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                // The TextField
-                                TextField(
-                                  controller: _controller,
-                                  onSubmitted: _sendMessage,
-                                  minLines: 1,
-                                  maxLines: 4,
-                                  textAlignVertical: TextAlignVertical.top,
-                                  style: TextStyle(color: textColor),
-                                  cursorColor: textColor,
-                                  decoration: InputDecoration(
-                                    hintText: 'Write something...',
-                                    border: InputBorder.none,
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 5),
-                                    hintStyle: TextStyle(
-                                      fontFamily: GoogleFonts.spaceMono().fontFamily,
-                                      fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
-                                      color: textColor.withOpacity(0.6),
-                                    ),
-                                  ),
-                                ),
-                                // Row of attach vs. send
-                                Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    // Attach files/images
-                                    IconButton(
-                                      icon: Icon(Icons.attach_file,
-                                          color: iconColor),
-                                      tooltip: 'Upload files/images',
-                                      onPressed: _showImageOptionsDialog,
-                                    ),
-
-                                    // Send text and images
-                                    IconButton(
-                                      iconSize: 24,
-                                      icon: !_isLoading
-                                          ? Icon(Icons.arrow_circle_right_outlined,
-                                              color: iconColor)
-                                          : Icon(Icons.hourglass_top,
-                                              color: iconColor),
-                                      onPressed: () =>
-                                          _sendMessage(_controller.text),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
-      );
+      ),
+    );
+  }
+
+  List<Widget> _buildGroupedSessions(List<ChatSession> sessions, Color textColor, Color borderColor) {
+    Map<String, List<ChatSession>> grouped = {
+      'Today': [],
+      'Yesterday': [],
+      'Last 7 Days': [],
+      'Last 30 Days': [],
+      'Older': [],
+    };
+
+    DateTime now = DateTime.now();
+    for (var session in sessions) {
+      Duration diff = now.difference(session.createdAt);
+      if (diff.inDays == 0 &&
+          now.day == session.createdAt.day &&
+          now.month == session.createdAt.month &&
+          now.year == session.createdAt.year) {
+        grouped['Today']!.add(session);
+      } else if (diff.inDays == 1 ||
+          (diff.inDays < 1 && now.day != session.createdAt.day)) {
+        grouped['Yesterday']!.add(session);
+      } else if (diff.inDays <= 7) {
+        grouped['Last 7 Days']!.add(session);
+      } else if (diff.inDays <= 30) {
+        grouped['Last 30 Days']!.add(session);
+      } else {
+        grouped['Older']!.add(session);
+      }
     }
 
-      List<Widget> _buildGroupedSessions(List<ChatSession> sessions, Color textColor, Color borderColor) {
-        Map<String, List<ChatSession>> grouped = {
-          'Today': [],
-          'Yesterday': [],
-          'Last 7 Days': [],
-          'Last 30 Days': [],
-          'Older': [],
-        };
-
-        DateTime now = DateTime.now();
-        for (var session in sessions) {
-          Duration diff = now.difference(session.createdAt);
-          if (diff.inDays == 0 &&
-              now.day == session.createdAt.day &&
-              now.month == session.createdAt.month &&
-              now.year == session.createdAt.year) {
-            grouped['Today']!.add(session);
-          } else if (diff.inDays == 1 ||
-              (diff.inDays < 1 && now.day != session.createdAt.day)) {
-            grouped['Yesterday']!.add(session);
-          } else if (diff.inDays <= 7) {
-            grouped['Last 7 Days']!.add(session);
-          } else if (diff.inDays <= 30) {
-            grouped['Last 30 Days']!.add(session);
-          } else {
-            grouped['Older']!.add(session);
-          }
-        }
-
-        List<Widget> widgets = [];
-        grouped.forEach((key, value) {
-          if (value.isNotEmpty) {
-            widgets.add(
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                child: Text(
-                  key,
-                  style: GoogleFonts.spaceMono(
-                    fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
-                    fontWeight: FontWeight.bold,
-                    color: textColor,
-                  ),
-                ),
+    List<Widget> widgets = [];
+    grouped.forEach((key, value) {
+      if (value.isNotEmpty) {
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: Text(
+              key,
+              style: GoogleFonts.spaceMono(
+                fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
+                fontWeight: FontWeight.bold,
+                color: textColor,
               ),
-            );
-            for (var session in value) {
-              widgets.add(
-                ListTile(
-                  title: Text(
-                    session.title == 'Untitled' ? '(New Chat)' : session.title,
-                    style: GoogleFonts.spaceMono(color: textColor, fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
+            ),
+          ),
+        );
+        for (var session in value) {
+          widgets.add(
+            ListTile(
+              title: Text(
+                session.title == 'Untitled' ? '(New Chat)' : session.title,
+                style: GoogleFonts.spaceMono(color: textColor, fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
+              ),
+              subtitle: Text(
+                _formatDate(session.createdAt),
+                style: GoogleFonts.spaceMono(color: textColor.withOpacity(0.6), fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
+              ),
+              onTap: () {
+                Navigator.pop(context); // close drawer
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => OllamaChatPage(sessionId: session.id),
                   ),
-                  subtitle: Text(
-                    _formatDate(session.createdAt),
-                    style: GoogleFonts.spaceMono(color: textColor.withOpacity(0.6), fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
-                  ),
-                  onTap: () {
-                    Navigator.pop(context); // close drawer
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => OllamaChatPage(sessionId: session.id),
-                      ),
-                    );
-                  },
-                ),
-              );
-              widgets.add(const Divider());
-            }
-          }
-        });
-
-        return widgets;
+                );
+              },
+            ),
+          );
+          widgets.add(const Divider());
+        }
       }
+    });
 
-      String _formatDate(DateTime date) {
-        return "${date.year}-${date.month.toString().padLeft(2,'0')}-${date.day.toString().padLeft(2,'0')} ${date.hour.toString().padLeft(2,'0')}:${date.minute.toString().padLeft(2,'0')}";
-      }
-    }
+    return widgets;
+  }
+
+  String _formatDate(DateTime date) {
+    return "${date.year}-${date.month.toString().padLeft(2,'0')}-${date.day.toString().padLeft(2,'0')} ${date.hour.toString().padLeft(2,'0')}:${date.minute.toString().padLeft(2,'0')}";
+  }
+}
 
 // --------------------------------------------------
 // 1) ChatMessage model
