@@ -396,6 +396,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   final _controller = TextEditingController();
   bool _isLoading = false;
 
+  // ScrollController for Auto-Scroll feature
+  final ScrollController _scrollController = ScrollController();
+
   // Instead of local list, we'll pull from the provider
   ChatSession? _currentSession;
 
@@ -441,6 +444,26 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     fetchTags(baseUri);
   }
 
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  // Method to scroll to the bottom of the ListView
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
   Future<void> clearHiveBox() async {
     final box = Hive.box('settings');
     await box.clear();
@@ -461,6 +484,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         setState(() {
           _pendingImages.add(bytes);
         });
+        _scrollToBottom(); // Scroll after adding image
       }
     } catch (e) {
       debugPrint('Error picking image from gallery: $e');
@@ -482,6 +506,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         setState(() {
           _pendingImages.add(bytes);
         });
+        _scrollToBottom(); // Scroll after adding photo
       }
     } catch (e) {
       debugPrint('Error taking photo: $e');
@@ -504,6 +529,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
               setState(() {
                 _pendingImages.add(bytes);
               });
+              _scrollToBottom(); // Scroll after adding image
             }
           } else {
             if (pickedFile.path != null) {
@@ -512,6 +538,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
               setState(() {
                 _pendingImages.add(bytes);
               });
+              _scrollToBottom(); // Scroll after adding image
             }
           }
         } else {
@@ -526,6 +553,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
               isUser: true,
             ),
           );
+          _scrollToBottom(); // Scroll after adding file message
         }
       }
     } catch (e) {
@@ -783,8 +811,11 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                               // Create a new session
                               final newSession =
                                   await chatSessionsProvider.createNewSession();
+                              // Close the settings dialog before navigating
                               if (context.mounted) {
-                                Navigator.push(
+                                Navigator.of(context).pop();
+                                // Navigate to the new chat session, replacing the current page
+                                Navigator.pushReplacement(
                                   context,
                                   MaterialPageRoute(
                                     builder: (context) =>
@@ -792,7 +823,6 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                   ),
                                 );
                               }
-                              Navigator.of(context).pop();
                             }
                           },
                           child: const Padding(
@@ -808,12 +838,12 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                   ),
                 ),
               );
-              },
-            ),
-          );
-        },
-      );
-    }
+            },
+          ),
+        );
+      },
+    );
+  }
 
     // --------------------------------------------------
     // 3C) Streaming chat
@@ -840,6 +870,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
           sessionId: widget.sessionId,
           message: ChatMessage(text: messageText.trim(), isUser: true),
         );
+        _scrollToBottom(); // Scroll after adding user message
       }
 
       // Add pending images as user messages
@@ -848,6 +879,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
           sessionId: widget.sessionId,
           message: ChatMessage(text: '', imageData: imageData, isUser: true),
         );
+        _scrollToBottom(); // Scroll after adding each image
       }
 
       // Create an empty botMessage to hold partial tokens
@@ -856,6 +888,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         sessionId: widget.sessionId,
         message: botMessage,
       );
+      _scrollToBottom(); // Scroll after adding bot message
 
       final prompt = settingsProvider.systemPrompt.isNotEmpty
           ? "${settingsProvider.systemPrompt}\n\nUser: $messageText"
@@ -883,6 +916,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
             sessionId: widget.sessionId,
             newText: newText,
           );
+          _scrollToBottom(); // Scroll after updating bot message
         }
       } catch (e) {
         await chatSessionsProvider.updateLastBotMessage(
@@ -890,6 +924,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
           newText: 'Error: Possibly no server endpoint or invalid response.',
         );
         debugPrint("Error during message streaming: $e");
+        _scrollToBottom(); // Scroll after error message
       } finally {
         await chatSessionsProvider.finalizeMessage(widget.sessionId);
         setState(() {
@@ -1055,6 +1090,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                         // Persist in Hive
                         final box = Hive.box('settings');
                         await box.put('defaultModel', _defaultModel);
+                        _scrollToBottom(); // Scroll after changing model
                       },
                     ),
                   ),
@@ -1069,7 +1105,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                   final newSession =
                       await chatSessionsProvider.createNewSession();
                   if (context.mounted) {
-                    Navigator.push(
+                    Navigator.pushReplacement(
                       context,
                       MaterialPageRoute(
                         builder: (context) =>
@@ -1131,6 +1167,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                       top: kIsWeb ? 20.0 : 10.0,
                     ),
                     child: ListView.builder(
+                      controller: _scrollController, // Attach ScrollController
                       padding: const EdgeInsets.all(8.0),
                       itemCount: _currentSession?.messages.length ?? 0,
                       itemBuilder: (context, index) {
@@ -1169,6 +1206,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                   setState(() {
                                     _pendingImages.removeAt(index);
                                   });
+                                  _scrollToBottom(); // Scroll after removing image
                                 },
                                 child: Container(
                                   decoration: BoxDecoration(
@@ -1277,85 +1315,85 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       );
     }
 
-    List<Widget> _buildGroupedSessions(List<ChatSession> sessions, Color textColor, Color borderColor) {
-      Map<String, List<ChatSession>> grouped = {
-        'Today': [],
-        'Yesterday': [],
-        'Last 7 Days': [],
-        'Last 30 Days': [],
-        'Older': [],
-      };
+      List<Widget> _buildGroupedSessions(List<ChatSession> sessions, Color textColor, Color borderColor) {
+        Map<String, List<ChatSession>> grouped = {
+          'Today': [],
+          'Yesterday': [],
+          'Last 7 Days': [],
+          'Last 30 Days': [],
+          'Older': [],
+        };
 
-      DateTime now = DateTime.now();
-      for (var session in sessions) {
-        Duration diff = now.difference(session.createdAt);
-        if (diff.inDays == 0 &&
-            now.day == session.createdAt.day &&
-            now.month == session.createdAt.month &&
-            now.year == session.createdAt.year) {
-          grouped['Today']!.add(session);
-        } else if (diff.inDays == 1 ||
-            (diff.inDays < 1 && now.day != session.createdAt.day)) {
-          grouped['Yesterday']!.add(session);
-        } else if (diff.inDays <= 7) {
-          grouped['Last 7 Days']!.add(session);
-        } else if (diff.inDays <= 30) {
-          grouped['Last 30 Days']!.add(session);
-        } else {
-          grouped['Older']!.add(session);
-        }
-      }
-
-      List<Widget> widgets = [];
-      grouped.forEach((key, value) {
-        if (value.isNotEmpty) {
-          widgets.add(
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-              child: Text(
-                key,
-                style: GoogleFonts.spaceMono(
-                  fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
-                  fontWeight: FontWeight.bold,
-                  color: textColor,
-                ),
-              ),
-            ),
-          );
-          for (var session in value) {
-            widgets.add(
-              ListTile(
-                title: Text(
-                  session.title == 'Untitled' ? '(New Chat)' : session.title,
-                  style: GoogleFonts.spaceMono(color: textColor, fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
-                ),
-                subtitle: Text(
-                  _formatDate(session.createdAt),
-                  style: GoogleFonts.spaceMono(color: textColor.withOpacity(0.6), fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
-                ),
-                onTap: () {
-                  Navigator.pop(context); // close drawer
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => OllamaChatPage(sessionId: session.id),
-                    ),
-                  );
-                },
-              ),
-            );
-            widgets.add(const Divider());
+        DateTime now = DateTime.now();
+        for (var session in sessions) {
+          Duration diff = now.difference(session.createdAt);
+          if (diff.inDays == 0 &&
+              now.day == session.createdAt.day &&
+              now.month == session.createdAt.month &&
+              now.year == session.createdAt.year) {
+            grouped['Today']!.add(session);
+          } else if (diff.inDays == 1 ||
+              (diff.inDays < 1 && now.day != session.createdAt.day)) {
+            grouped['Yesterday']!.add(session);
+          } else if (diff.inDays <= 7) {
+            grouped['Last 7 Days']!.add(session);
+          } else if (diff.inDays <= 30) {
+            grouped['Last 30 Days']!.add(session);
+          } else {
+            grouped['Older']!.add(session);
           }
         }
-      });
 
-      return widgets;
-    }
+        List<Widget> widgets = [];
+        grouped.forEach((key, value) {
+          if (value.isNotEmpty) {
+            widgets.add(
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: Text(
+                  key,
+                  style: GoogleFonts.spaceMono(
+                    fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
+                    fontWeight: FontWeight.bold,
+                    color: textColor,
+                  ),
+                ),
+              ),
+            );
+            for (var session in value) {
+              widgets.add(
+                ListTile(
+                  title: Text(
+                    session.title == 'Untitled' ? '(New Chat)' : session.title,
+                    style: GoogleFonts.spaceMono(color: textColor, fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
+                  ),
+                  subtitle: Text(
+                    _formatDate(session.createdAt),
+                    style: GoogleFonts.spaceMono(color: textColor.withOpacity(0.6), fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context); // close drawer
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => OllamaChatPage(sessionId: session.id),
+                      ),
+                    );
+                  },
+                ),
+              );
+              widgets.add(const Divider());
+            }
+          }
+        });
 
-    String _formatDate(DateTime date) {
-      return "${date.year}-${date.month.toString().padLeft(2,'0')}-${date.day.toString().padLeft(2,'0')} ${date.hour.toString().padLeft(2,'0')}:${date.minute.toString().padLeft(2,'0')}";
+        return widgets;
+      }
+
+      String _formatDate(DateTime date) {
+        return "${date.year}-${date.month.toString().padLeft(2,'0')}-${date.day.toString().padLeft(2,'0')} ${date.hour.toString().padLeft(2,'0')}:${date.minute.toString().padLeft(2,'0')}";
+      }
     }
-  }
 
 // --------------------------------------------------
 // 1) ChatMessage model
