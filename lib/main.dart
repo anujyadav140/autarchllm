@@ -410,6 +410,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   late OllamaClient client;
   bool _isModelListPossible = false;
 
+  // ** New: List to hold pending images before sending **
+  List<Uint8List> _pendingImages = [];
+
   @override
   void initState() {
     super.initState();
@@ -455,16 +458,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
 
       if (pickedFile != null) {
         final bytes = await pickedFile.readAsBytes();
-        final chatSessionsProvider =
-            Provider.of<ChatSessionsProvider>(context, listen: false);
-        await chatSessionsProvider.addMessage(
-          sessionId: widget.sessionId,
-          message: ChatMessage(
-            text: '',
-            imageData: bytes,
-            isUser: true,
-          ),
-        );
+        setState(() {
+          _pendingImages.add(bytes);
+        });
       }
     } catch (e) {
       debugPrint('Error picking image from gallery: $e');
@@ -483,16 +479,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       final XFile? photo = await picker.pickImage(source: ImageSource.camera);
       if (photo != null) {
         final bytes = await File(photo.path).readAsBytes();
-        final chatSessionsProvider =
-            Provider.of<ChatSessionsProvider>(context, listen: false);
-        await chatSessionsProvider.addMessage(
-          sessionId: widget.sessionId,
-          message: ChatMessage(
-            text: '',
-            imageData: bytes,
-            isUser: true,
-          ),
-        );
+        setState(() {
+          _pendingImages.add(bytes);
+        });
       }
     } catch (e) {
       debugPrint('Error taking photo: $e');
@@ -509,33 +498,20 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         if (pickedFile.extension != null &&
             ['png', 'jpg', 'jpeg']
                 .contains(pickedFile.extension!.toLowerCase())) {
-          final chatSessionsProvider =
-              Provider.of<ChatSessionsProvider>(context, listen: false);
-
           if (kIsWeb) {
             final bytes = pickedFile.bytes;
             if (bytes != null) {
-              await chatSessionsProvider.addMessage(
-                sessionId: widget.sessionId,
-                message: ChatMessage(
-                  text: '',
-                  imageData: bytes,
-                  isUser: true,
-                ),
-              );
+              setState(() {
+                _pendingImages.add(bytes);
+              });
             }
           } else {
             if (pickedFile.path != null) {
               final file = File(pickedFile.path!);
               final bytes = await file.readAsBytes();
-              await chatSessionsProvider.addMessage(
-                sessionId: widget.sessionId,
-                message: ChatMessage(
-                  text: '',
-                  imageData: bytes,
-                  isUser: true,
-                ),
-              );
+              setState(() {
+                _pendingImages.add(bytes);
+              });
             }
           }
         } else {
@@ -804,6 +780,18 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                   Provider.of<ChatSessionsProvider>(context,
                                       listen: false);
                               await chatSessionsProvider.deleteAllSessions();
+                              // Create a new session
+                              final newSession =
+                                  await chatSessionsProvider.createNewSession();
+                              if (context.mounted) {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        OllamaChatPage(sessionId: newSession.id),
+                                  ),
+                                );
+                              }
                               Navigator.of(context).pop();
                             }
                           },
@@ -820,505 +808,553 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                   ),
                 ),
               );
-            },
-          ),
-        );
-      },
-    );
-  }
-
-  // --------------------------------------------------
-  // 3C) Streaming chat
-  // --------------------------------------------------
-  Future<void> _sendMessage(String messageText) async {
-    if (messageText.isEmpty) return;
-    setState(() {
-      _isLoading = true;
-    });
-
-    // Access the existing SettingsProvider
-    final settingsProvider =
-        Provider.of<SettingsProvider>(context, listen: false);
-    _defaultModel = Hive.box('settings').get('defaultModel', defaultValue: '');
-
-    // Add user message to the session
-    final chatSessionsProvider =
-        Provider.of<ChatSessionsProvider>(context, listen: false);
-    await chatSessionsProvider.addMessage(
-      sessionId: widget.sessionId,
-      message: ChatMessage(text: messageText, isUser: true),
-    );
-
-    // Create an empty botMessage to hold partial tokens
-    final botMessage = ChatMessage(text: '', isUser: false);
-    await chatSessionsProvider.addMessage(
-      sessionId: widget.sessionId,
-      message: botMessage,
-    );
-
-    final stream = client.generateCompletionStream(
-      request: GenerateCompletionRequest(
-        model: _defaultModel,
-        prompt: settingsProvider.systemPrompt.isNotEmpty
-            ? "${settingsProvider.systemPrompt}\n\nUser: $messageText"
-            : messageText,
-      ),
-    );
-
-    print("Using Model: $_defaultModel");
-    print("System Prompt: ${settingsProvider.systemPrompt}");
-    print("Server URI: ${client.baseUrl}");
-    print("User Message: $messageText");
-
-    try {
-      await for (final res in stream) {
-        print(res);
-        // Append partial tokens
-        final newText = botMessage.text + (res.response ?? '');
-        await chatSessionsProvider.updateLastBotMessage(
-          sessionId: widget.sessionId,
-          newText: newText,
-        );
-      }
-    } catch (e) {
-      await chatSessionsProvider.updateLastBotMessage(
-        sessionId: widget.sessionId,
-        newText: 'Error: Possibly no server endpoint or invalid response.',
-      );
-      debugPrint("Error during message streaming: $e");
-    } finally {
-      await chatSessionsProvider.finalizeMessage(widget.sessionId);
-      setState(() {
-        _isLoading = false;
-      });
-    }
-    _controller.clear();
-  }
-
-  Future<void> fetchTags(String url) async {
-    final Uri uri = Uri.parse('$url/tags'); // Adjust endpoint as needed
-
-    try {
-      final response = await http.get(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          // Removed CORS headers as they should be managed server-side
+              },
+            ),
+          );
         },
       );
+    }
 
-      if (response.statusCode == 200) {
-        Map<String, dynamic> jsonData = json.decode(response.body);
-        List<dynamic> models = jsonData['models'];
-        List<String> modelNames =
-            models.map((model) => model['name'] as String).toList();
+    // --------------------------------------------------
+    // 3C) Streaming chat
+    // --------------------------------------------------
+    Future<void> _sendMessage(String messageText) async {
+      // Prevent sending if there's no text and no pending images
+      if (messageText.trim().isEmpty && _pendingImages.isEmpty) return;
 
+      setState(() {
+        _isLoading = true;
+      });
+
+      // Access the existing SettingsProvider
+      final settingsProvider =
+          Provider.of<SettingsProvider>(context, listen: false);
+      _defaultModel = Hive.box('settings').get('defaultModel', defaultValue: '');
+
+      final chatSessionsProvider =
+          Provider.of<ChatSessionsProvider>(context, listen: false);
+
+      // Add user text message if any
+      if (messageText.trim().isNotEmpty) {
+        await chatSessionsProvider.addMessage(
+          sessionId: widget.sessionId,
+          message: ChatMessage(text: messageText.trim(), isUser: true),
+        );
+      }
+
+      // Add pending images as user messages
+      for (var imageData in _pendingImages) {
+        await chatSessionsProvider.addMessage(
+          sessionId: widget.sessionId,
+          message: ChatMessage(text: '', imageData: imageData, isUser: true),
+        );
+      }
+
+      // Create an empty botMessage to hold partial tokens
+      final botMessage = ChatMessage(text: '', isUser: false);
+      await chatSessionsProvider.addMessage(
+        sessionId: widget.sessionId,
+        message: botMessage,
+      );
+
+      final prompt = settingsProvider.systemPrompt.isNotEmpty
+          ? "${settingsProvider.systemPrompt}\n\nUser: $messageText"
+          : messageText;
+
+      final stream = client.generateCompletionStream(
+        request: GenerateCompletionRequest(
+          model: _defaultModel,
+          prompt: prompt,
+        ),
+      );
+
+      print("Using Model: $_defaultModel");
+      print("System Prompt: ${settingsProvider.systemPrompt}");
+      print("Server URI: ${client.baseUrl}");
+      print("User Message: $messageText");
+
+      try {
+        await for (final res in stream) {
+          print(res);
+          // Append partial tokens
+          final newText = botMessage.text + (res.response ?? '');
+          await chatSessionsProvider.updateLastBotMessage(
+            sessionId: widget.sessionId,
+            newText: newText,
+          );
+        }
+      } catch (e) {
+        await chatSessionsProvider.updateLastBotMessage(
+          sessionId: widget.sessionId,
+          newText: 'Error: Possibly no server endpoint or invalid response.',
+        );
+        debugPrint("Error during message streaming: $e");
+      } finally {
+        await chatSessionsProvider.finalizeMessage(widget.sessionId);
         setState(() {
-          _modelOptions = modelNames;
-          _isModelListPossible = true;
-          if (_modelOptions.isNotEmpty) {
-            _defaultModel = _modelOptions[0];
-          }
+          _isLoading = false;
+          _pendingImages.clear(); // Clear pending images after sending
         });
-      } else {
-        debugPrint("Error in fetchTags: ${response.statusCode}");
+      }
+      _controller.clear();
+    }
+
+    Future<void> fetchTags(String url) async {
+      final Uri uri = Uri.parse('$url/tags'); // Adjust endpoint as needed
+
+      try {
+        final response = await http.get(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            // Removed CORS headers as they should be managed server-side
+          },
+        );
+
+        if (response.statusCode == 200) {
+          Map<String, dynamic> jsonData = json.decode(response.body);
+          List<dynamic> models = jsonData['models'];
+          List<String> modelNames =
+              models.map((model) => model['name'] as String).toList();
+
+          setState(() {
+            _modelOptions = modelNames;
+            _isModelListPossible = true;
+            if (_modelOptions.isNotEmpty) {
+              _defaultModel = _modelOptions[0];
+            }
+          });
+        } else {
+          debugPrint("Error in fetchTags: ${response.statusCode}");
+          setState(() {
+            _isModelListPossible = false;
+          });
+        }
+      } catch (e) {
+        debugPrint("Exception while fetching tags: $e");
         setState(() {
           _isModelListPossible = false;
         });
+      } finally {
+        // Save updated values in Hive
+        final box = Hive.box('settings');
+        await box.put('modelOptions', _modelOptions);
+        await box.put('defaultModel', _defaultModel);
+        await box.put('systemPrompt', _systemPrompt);
+        await box.put('serverURI', url);
       }
-    } catch (e) {
-      debugPrint("Exception while fetching tags: $e");
-      setState(() {
-        _isModelListPossible = false;
-      });
-    } finally {
-      // Save updated values in Hive
-      final box = Hive.box('settings');
-      await box.put('modelOptions', _modelOptions);
-      await box.put('defaultModel', _defaultModel);
-      await box.put('systemPrompt', _systemPrompt);
-      await box.put('serverURI', url);
     }
-  }
 
-  // --------------------------------------------------
-  // 3D) Show popup of image upload options
-  // --------------------------------------------------
-  void _showImageOptionsDialog() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Add Images', style: GoogleFonts.spaceMono(fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize),),
-          content: SingleChildScrollView(
-            child: ListBody(
-              children: <Widget>[
-                // 1) Upload from gallery
-                ListTile(
-                  leading: const Icon(Icons.image),
-                  title: const Text('Upload Image'),
-                  onTap: () async {
-                    Navigator.of(context).pop();
-                    await _pickImageFromGallery();
-                  },
-                ),
-                // 2) Take Photo (mobile only)
-                if (!kIsWeb)
+    // --------------------------------------------------
+    // 3D) Show popup of image upload options
+    // --------------------------------------------------
+    void _showImageOptionsDialog() {
+      showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: Text('Add Images', style: GoogleFonts.spaceMono(fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize),),
+            content: SingleChildScrollView(
+              child: ListBody(
+                children: <Widget>[
+                  // 1) Upload from gallery
                   ListTile(
-                    leading: const Icon(Icons.camera_alt),
-                    title: const Text('Take Photo'),
+                    leading: const Icon(Icons.image),
+                    title: const Text('Upload Image'),
                     onTap: () async {
                       Navigator.of(context).pop();
-                      await _takePhoto();
+                      await _pickImageFromGallery();
                     },
                   ),
-                // 3) Upload any file
-                ListTile(
-                  leading: const Icon(Icons.attach_file),
-                  title: const Text('Upload File'),
-                  onTap: () async {
-                    Navigator.of(context).pop();
-                    await _pickFile();
-                  },
+                  // 2) Take Photo (mobile only)
+                  if (!kIsWeb)
+                    ListTile(
+                      leading: const Icon(Icons.camera_alt),
+                      title: const Text('Take Photo'),
+                      onTap: () async {
+                        Navigator.of(context).pop();
+                        await _takePhoto();
+                      },
+                    ),
+                  // 3) Upload any file
+                  ListTile(
+                    leading: const Icon(Icons.attach_file),
+                    title: const Text('Upload File'),
+                    onTap: () async {
+                      Navigator.of(context).pop();
+                      await _pickFile();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    }
+
+    // --------------------------------------------------
+    // 4) Build UI
+    // --------------------------------------------------
+    @override
+    Widget build(BuildContext context) {
+      final themeProvider = context.watch<ThemeProvider>();
+      final isLight = themeProvider.isLightMode;
+
+      final appBarColor = isLight ? Colors.white : Colors.black;
+      final iconColor = isLight ? Colors.black : Colors.white;
+      final textColor = isLight ? Colors.black : Colors.white;
+      final borderColor = isLight ? Colors.black : Colors.white;
+
+      // Re-fetch the current session from provider in case it changed
+      final chatSessionsProvider = context.watch<ChatSessionsProvider>();
+      _currentSession = chatSessionsProvider.getSessionById(widget.sessionId);
+
+      return SafeArea(
+        child: Scaffold(
+          appBar: AppBar(
+            backgroundColor: appBarColor,
+            iconTheme: IconThemeData(color: iconColor),
+            title: Row(
+              children: [
+                Text(
+                  'Autarch',
+                  style: GoogleFonts.spaceMono(
+                    color: textColor,
+                    fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
+                  ),
+                ),
+                const SizedBox(width: 25),
+                if (_modelOptions.isNotEmpty)
+                  Container(
+                    width: 125,
+                    child: DropdownButton<String>(
+                      isDense: true,
+                      isExpanded: true,
+                      style: GoogleFonts.spaceMono(color: textColor,fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
+                      dropdownColor: isLight ? Colors.white : Colors.grey[800],
+                      iconEnabledColor: iconColor,
+                      value: _defaultModel.isNotEmpty
+                          ? _defaultModel
+                          : (_modelOptions.isNotEmpty ? _modelOptions[0] : null),
+                      hint: const Text('Select Model'),
+                      items: _modelOptions.map((String modelName) {
+                        return DropdownMenuItem<String>(
+                          value: modelName,
+                          child: Text(modelName, style: TextStyle(color: textColor)),
+                        );
+                      }).toList(),
+                      onChanged: (String? newValue) async {
+                        if (newValue == null) return;
+                        setState(() {
+                          _defaultModel = newValue;
+                        });
+                    
+                        // Persist in Hive
+                        final box = Hive.box('settings');
+                        await box.put('defaultModel', _defaultModel);
+                      },
+                    ),
+                  ),
+              ],
+            ),
+            // The "New Chat Page" icon in *this* page can also open a fresh chat
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.edit_document),
+                onPressed: () async {
+                  // Create a new session
+                  final newSession =
+                      await chatSessionsProvider.createNewSession();
+                  if (context.mounted) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            OllamaChatPage(sessionId: newSession.id),
+                      ),
+                    );
+                  }
+                },
+              ),
+            ],
+            bottomOpacity: 1,
+            shape: Border(
+              bottom: BorderSide(color: borderColor, width: 1.0),
+            ),
+          ),
+          // Drawer: list out existing chat sessions divided by days
+          drawer: Drawer(
+            child: Column(
+              children: <Widget>[
+                Expanded(
+                  child: ListView(
+                    padding: EdgeInsets.zero,
+                    children: [
+                      // DrawerHeader can be customized if needed
+                      SizedBox(height: 16),
+                      ..._buildGroupedSessions(chatSessionsProvider.sessions, textColor, borderColor),
+                    ],
+                  ),
+                ),
+                const Divider(),
+                Container(
+                  alignment: Alignment.center,
+                  margin: const EdgeInsets.only(bottom: 16.0, right: 16.0),
+                  child: TextButton(
+                    style: TextButton.styleFrom(
+                      foregroundColor: textColor,
+                      side: BorderSide(color: borderColor, width: 0),
+                      shape: const RoundedRectangleBorder(
+                        borderRadius: BorderRadius.zero,
+                      ),
+                    ),
+                    onPressed: _openSettingsDialog,
+                    child: const Text('Settings'),
+                  ),
                 ),
               ],
             ),
           ),
-        );
-      },
-    );
-  }
-
-  // --------------------------------------------------
-  // 4) Build UI
-  // --------------------------------------------------
-  @override
-  Widget build(BuildContext context) {
-    final themeProvider = context.watch<ThemeProvider>();
-    final isLight = themeProvider.isLightMode;
-
-    final appBarColor = isLight ? Colors.white : Colors.black;
-    final iconColor = isLight ? Colors.black : Colors.white;
-    final textColor = isLight ? Colors.black : Colors.white;
-    final borderColor = isLight ? Colors.black : Colors.white;
-
-    // Re-fetch the current session from provider in case it changed
-    final chatSessionsProvider = context.watch<ChatSessionsProvider>();
-    _currentSession = chatSessionsProvider.getSessionById(widget.sessionId);
-
-    return SafeArea(
-      child: Scaffold(
-        appBar: AppBar(
-          backgroundColor: appBarColor,
-          iconTheme: IconThemeData(color: iconColor),
-          title: Row(
-            children: [
-              Text(
-                'Autarch',
-                style: GoogleFonts.spaceMono(
-                  color: textColor,
-                  fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
-                ),
-              ),
-              const SizedBox(width: 25),
-              if (_modelOptions.isNotEmpty)
-                Container(
-                  width: 125,
-                  child: DropdownButton<String>(
-                    isDense: true,
-                    isExpanded: true,
-                    style: GoogleFonts.spaceMono(color: textColor,fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
-                    dropdownColor: isLight ? Colors.white : Colors.grey[800],
-                    iconEnabledColor: iconColor,
-                    value: _defaultModel.isNotEmpty
-                        ? _defaultModel
-                        : (_modelOptions.isNotEmpty ? _modelOptions[0] : null),
-                    hint: const Text('Select Model'),
-                    items: _modelOptions.map((String modelName) {
-                      return DropdownMenuItem<String>(
-                        value: modelName,
-                        child: Text(modelName, style: TextStyle(color: textColor)),
-                      );
-                    }).toList(),
-                    onChanged: (String? newValue) async {
-                      if (newValue == null) return;
-                      setState(() {
-                        _defaultModel = newValue;
-                      });
-                  
-                      // Persist in Hive
-                      final box = Hive.box('settings');
-                      await box.put('defaultModel', _defaultModel);
-                    },
-                  ),
-                ),
-            ],
-          ),
-          // The "New Chat Page" icon in *this* page can also open a fresh chat
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.edit_document),
-              onPressed: () async {
-                // Create a new session
-                final newSession =
-                    await chatSessionsProvider.createNewSession();
-                if (context.mounted) {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) =>
-                          OllamaChatPage(sessionId: newSession.id),
+          body: SelectionArea(
+            child: Column(
+              children: [
+                // 1) Messages area
+                Expanded(
+                  child: Container(
+                    color: isLight ? Colors.white : const Color(0xFF1B1B1D),
+                    padding: EdgeInsets.only(
+                      left: kIsWeb ? 100.0 : 15.0,
+                      right: kIsWeb ? 100.0 : 15.0,
+                      top: kIsWeb ? 20.0 : 10.0,
                     ),
-                  );
-                }
-              },
-            ),
-          ],
-          bottomOpacity: 1,
-          shape: Border(
-            bottom: BorderSide(color: borderColor, width: 1.0),
-          ),
-        ),
-        // Drawer: list out existing chat sessions divided by days
-        drawer: Drawer(
-          child: Column(
-            children: <Widget>[
-              Expanded(
-                child: ListView(
-                  padding: EdgeInsets.zero,
-                  children: [
-                    // DrawerHeader(
-                    //   decoration: BoxDecoration(
-                    //     color: isLight ? Colors.blue : Colors.grey[800],
-                    //   ),
-                    //   child: Column(
-                    //     children: [
-                    //       Text(
-                    //         'Your Chats',
-                    //         style: GoogleFonts.spaceMono(
-                    //           color: Colors.white,
-                    //            fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize,
-                    //         ),
-                    //       ),
-                    //     ],
-                        
-                    //   ),
-                    // ),
-                    SizedBox(height: 16),
-                    ..._buildGroupedSessions(chatSessionsProvider.sessions, textColor, borderColor),
-                  ],
-                ),
-              ),
-              const Divider(),
-              Container(
-                alignment: Alignment.center,
-                margin: const EdgeInsets.only(bottom: 16.0, right: 16.0),
-                child: TextButton(
-                  style: TextButton.styleFrom(
-                    foregroundColor: textColor,
-                    side: BorderSide(color: borderColor, width: 0),
-                    shape: const RoundedRectangleBorder(
-                      borderRadius: BorderRadius.zero,
+                    child: ListView.builder(
+                      padding: const EdgeInsets.all(8.0),
+                      itemCount: _currentSession?.messages.length ?? 0,
+                      itemBuilder: (context, index) {
+                        final message = _currentSession!.messages[index];
+                        return ChatBubble(message: message, isLight: isLight);
+                      },
                     ),
                   ),
-                  onPressed: _openSettingsDialog,
-                  child: const Text('Settings'),
                 ),
-              ),
-            ],
-          ),
-        ),
-        body: SelectionArea(
-          child: Column(
-            children: [
-              // 1) Messages area
-              Expanded(
-                child: Container(
-                  color: isLight ? Colors.white : const Color(0xFF1B1B1D),
-                  padding: EdgeInsets.only(
-                    left: kIsWeb ? 100.0 : 15.0,
-                    right: kIsWeb ? 100.0 : 15.0,
-                    top: kIsWeb ? 20.0 : 10.0,
-                  ),
-                  child: ListView.builder(
-                    padding: const EdgeInsets.all(8.0),
-                    itemCount: _currentSession?.messages.length ?? 0,
-                    itemBuilder: (context, index) {
-                      final message = _currentSession!.messages[index];
-                      return ChatBubble(message: message, isLight: isLight);
-                    },
-                  ),
-                ),
-              ),
 
-              if (_isLoading) const LinearProgressIndicator(),
-
-              // 2) Bottom input area
-              Padding(
-                padding: EdgeInsets.only(
-                  left: kIsWeb ? 100.0 : 8.0,
-                  right: kIsWeb ? 100.0 : 8.0,
-                  bottom: kIsWeb ? 20.0 : 4.0,
-                ),
-                child: Container(
-                  color: isLight ? Colors.white : Colors.black87,
-                  padding: const EdgeInsets.symmetric(vertical: 8.0),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      // The expanded Column
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: borderColor),
-                            borderRadius: BorderRadius.circular(0.0),
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              // The TextField
-                              TextField(
-                                controller: _controller,
-                                onSubmitted: _sendMessage,
-                                minLines: 1,
-                                maxLines: 4,
-                                textAlignVertical: TextAlignVertical.top,
-                                style: TextStyle(color: textColor),
-                                cursorColor: textColor,
-                                decoration: InputDecoration(
-                                  hintText: 'Write something...',
-                                  border: InputBorder.none,
-                                  contentPadding: const EdgeInsets.symmetric(horizontal: 5),
-                                  hintStyle: TextStyle(
-                                    fontFamily: GoogleFonts.spaceMono().fontFamily,
-                                    fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
-                                    color: textColor.withOpacity(0.6),
+                // ** New: Display pending images above the textfield **
+                if (_pendingImages.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 15.0, vertical: 5.0),
+                    height: 100,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _pendingImages.length,
+                      itemBuilder: (context, index) {
+                        return Stack(
+                          children: [
+                            Container(
+                              margin: const EdgeInsets.symmetric(horizontal: 5.0),
+                              child: Image.memory(
+                                _pendingImages[index],
+                                width: 80,
+                                height: 80,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                            Positioned(
+                              top: 0,
+                              right: 5,
+                              child: GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    _pendingImages.removeAt(index);
+                                  });
+                                },
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.black54,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.close,
+                                    size: 20,
+                                    color: Colors.white,
                                   ),
                                 ),
                               ),
-                              // Row of attach vs. send
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  // Attach files/images
-                                  IconButton(
-                                    icon: Icon(Icons.attach_file,
-                                        color: iconColor),
-                                    tooltip: 'Upload files/images',
-                                    onPressed: _showImageOptionsDialog,
-                                  ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
 
-                                  // Send text
-                                  IconButton(
-                                    iconSize: 24,
-                                    icon: !_isLoading
-                                        ? Icon(Icons.arrow_circle_right_outlined,
-                                            color: iconColor)
-                                        : Icon(Icons.hourglass_top,
-                                            color: iconColor),
-                                    onPressed: () =>
-                                        _sendMessage(_controller.text),
+                if (_isLoading) const LinearProgressIndicator(),
+
+                // 2) Bottom input area
+                Padding(
+                  padding: EdgeInsets.only(
+                    left: kIsWeb ? 100.0 : 8.0,
+                    right: kIsWeb ? 100.0 : 8.0,
+                    bottom: kIsWeb ? 20.0 : 4.0,
+                  ),
+                  child: Container(
+                    color: isLight ? Colors.white : Colors.black87,
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        // The expanded Column
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: borderColor),
+                              borderRadius: BorderRadius.circular(0.0),
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                // The TextField
+                                TextField(
+                                  controller: _controller,
+                                  onSubmitted: _sendMessage,
+                                  minLines: 1,
+                                  maxLines: 4,
+                                  textAlignVertical: TextAlignVertical.top,
+                                  style: TextStyle(color: textColor),
+                                  cursorColor: textColor,
+                                  decoration: InputDecoration(
+                                    hintText: 'Write something...',
+                                    border: InputBorder.none,
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 5),
+                                    hintStyle: TextStyle(
+                                      fontFamily: GoogleFonts.spaceMono().fontFamily,
+                                      fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
+                                      color: textColor.withOpacity(0.6),
+                                    ),
                                   ),
-                                ],
-                              ),
-                            ],
+                                ),
+                                // Row of attach vs. send
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    // Attach files/images
+                                    IconButton(
+                                      icon: Icon(Icons.attach_file,
+                                          color: iconColor),
+                                      tooltip: 'Upload files/images',
+                                      onPressed: _showImageOptionsDialog,
+                                    ),
+
+                                    // Send text and images
+                                    IconButton(
+                                      iconSize: 24,
+                                      icon: !_isLoading
+                                          ? Icon(Icons.arrow_circle_right_outlined,
+                                              color: iconColor)
+                                          : Icon(Icons.hourglass_top,
+                                              color: iconColor),
+                                      onPressed: () =>
+                                          _sendMessage(_controller.text),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      }
+
+      List<Widget> _buildGroupedSessions(List<ChatSession> sessions, Color textColor, Color borderColor) {
+        Map<String, List<ChatSession>> grouped = {
+          'Today': [],
+          'Yesterday': [],
+          'Last 7 Days': [],
+          'Last 30 Days': [],
+          'Older': [],
+        };
+
+        DateTime now = DateTime.now();
+        for (var session in sessions) {
+          Duration diff = now.difference(session.createdAt);
+          if (diff.inDays == 0 &&
+              now.day == session.createdAt.day &&
+              now.month == session.createdAt.month &&
+              now.year == session.createdAt.year) {
+            grouped['Today']!.add(session);
+          } else if (diff.inDays == 1 ||
+              (diff.inDays < 1 && now.day != session.createdAt.day)) {
+            grouped['Yesterday']!.add(session);
+          } else if (diff.inDays <= 7) {
+            grouped['Last 7 Days']!.add(session);
+          } else if (diff.inDays <= 30) {
+            grouped['Last 30 Days']!.add(session);
+          } else {
+            grouped['Older']!.add(session);
+          }
+        }
+
+        List<Widget> widgets = [];
+        grouped.forEach((key, value) {
+          if (value.isNotEmpty) {
+            widgets.add(
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: Text(
+                  key,
+                  style: GoogleFonts.spaceMono(
+                    fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
+                    fontWeight: FontWeight.bold,
+                    color: textColor,
                   ),
                 ),
               ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+            );
+            for (var session in value) {
+              widgets.add(
+                ListTile(
+                  title: Text(
+                    session.title == 'Untitled' ? '(New Chat)' : session.title,
+                    style: GoogleFonts.spaceMono(color: textColor, fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
+                  ),
+                  subtitle: Text(
+                    _formatDate(session.createdAt),
+                    style: GoogleFonts.spaceMono(color: textColor.withOpacity(0.6), fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context); // close drawer
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => OllamaChatPage(sessionId: session.id),
+                      ),
+                    );
+                  },
+                ),
+              );
+              widgets.add(const Divider());
+            }
+          }
+        });
 
-  List<Widget> _buildGroupedSessions(List<ChatSession> sessions, Color textColor, Color borderColor) {
-    Map<String, List<ChatSession>> grouped = {
-      'Today': [],
-      'Yesterday': [],
-      'Last 7 Days': [],
-      'Last 30 Days': [],
-      'Older': [],
-    };
+        return widgets;
+      }
 
-    DateTime now = DateTime.now();
-    for (var session in sessions) {
-      Duration diff = now.difference(session.createdAt);
-      if (diff.inDays == 0 &&
-          now.day == session.createdAt.day &&
-          now.month == session.createdAt.month &&
-          now.year == session.createdAt.year) {
-        grouped['Today']!.add(session);
-      } else if (diff.inDays == 1 ||
-          (diff.inDays < 1 && now.day != session.createdAt.day)) {
-        grouped['Yesterday']!.add(session);
-      } else if (diff.inDays <= 7) {
-        grouped['Last 7 Days']!.add(session);
-      } else if (diff.inDays <= 30) {
-        grouped['Last 30 Days']!.add(session);
-      } else {
-        grouped['Older']!.add(session);
+      String _formatDate(DateTime date) {
+        return "${date.year}-${date.month.toString().padLeft(2,'0')}-${date.day.toString().padLeft(2,'0')} ${date.hour.toString().padLeft(2,'0')}:${date.minute.toString().padLeft(2,'0')}";
       }
     }
-
-    List<Widget> widgets = [];
-    grouped.forEach((key, value) {
-      if (value.isNotEmpty) {
-        widgets.add(
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-            child: Text(
-              key,
-              style: GoogleFonts.spaceMono(
-                fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
-                fontWeight: FontWeight.bold,
-                color: textColor,
-              ),
-            ),
-          ),
-        );
-        for (var session in value) {
-          widgets.add(
-            ListTile(
-              title: Text(
-                session.title == 'Untitled' ? '(New Chat)' : session.title,
-                style: GoogleFonts.spaceMono(color: textColor, fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
-              ),
-              subtitle: Text(
-                _formatDate(session.createdAt),
-                style: GoogleFonts.spaceMono(color: textColor.withOpacity(0.6), fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
-              ),
-              onTap: () {
-                Navigator.pop(context); // close drawer
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => OllamaChatPage(sessionId: session.id),
-                  ),
-                );
-              },
-            ),
-          );
-          widgets.add(const Divider());
-        }
-      }
-    });
-
-    return widgets;
-  }
-
-  String _formatDate(DateTime date) {
-    return "${date.year}-${date.month.toString().padLeft(2,'0')}-${date.day.toString().padLeft(2,'0')} ${date.hour.toString().padLeft(2,'0')}:${date.minute.toString().padLeft(2,'0')}";
-  }
-}
 
 // --------------------------------------------------
 // 1) ChatMessage model
