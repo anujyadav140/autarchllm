@@ -42,7 +42,7 @@ class ChatSession {
       'messages': messages
           .map((m) => {
                 'text': m.text,
-                'imageData': m.imageData != null ? m.imageData!.toList() : null,
+                'imageData': m.imageData != null ? m.imageData : null,
                 'isUser': m.isUser,
               })
           .toList(),
@@ -411,7 +411,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   bool _isModelListPossible = false;
 
   // ** New: List to hold pending images before sending **
-  List<Uint8List> _pendingImages = [];
+  List<Uint8List?> _pendingImages = [];
 
   @override
   void initState() {
@@ -865,6 +865,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         request: GenerateCompletionRequest(
           model: _defaultModel,
           prompt: prompt,
+          images: _pendingImages.map((image) => base64Encode(image!)).toList(),
         ),
       );
 
@@ -872,7 +873,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       print("System Prompt: ${settingsProvider.systemPrompt}");
       print("Server URI: ${client.baseUrl}");
       print("User Message: $messageText");
-
+      _pendingImages.clear(); // Clear pending images after sending
       try {
         await for (final res in stream) {
           print(res);
@@ -1154,7 +1155,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                             Container(
                               margin: const EdgeInsets.symmetric(horizontal: 5.0),
                               child: Image.memory(
-                                _pendingImages[index],
+                                _pendingImages[index]!,
                                 width: 80,
                                 height: 80,
                                 fit: BoxFit.cover,
@@ -1274,87 +1275,87 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
           ),
         ),
       );
+    }
+
+    List<Widget> _buildGroupedSessions(List<ChatSession> sessions, Color textColor, Color borderColor) {
+      Map<String, List<ChatSession>> grouped = {
+        'Today': [],
+        'Yesterday': [],
+        'Last 7 Days': [],
+        'Last 30 Days': [],
+        'Older': [],
+      };
+
+      DateTime now = DateTime.now();
+      for (var session in sessions) {
+        Duration diff = now.difference(session.createdAt);
+        if (diff.inDays == 0 &&
+            now.day == session.createdAt.day &&
+            now.month == session.createdAt.month &&
+            now.year == session.createdAt.year) {
+          grouped['Today']!.add(session);
+        } else if (diff.inDays == 1 ||
+            (diff.inDays < 1 && now.day != session.createdAt.day)) {
+          grouped['Yesterday']!.add(session);
+        } else if (diff.inDays <= 7) {
+          grouped['Last 7 Days']!.add(session);
+        } else if (diff.inDays <= 30) {
+          grouped['Last 30 Days']!.add(session);
+        } else {
+          grouped['Older']!.add(session);
+        }
       }
 
-      List<Widget> _buildGroupedSessions(List<ChatSession> sessions, Color textColor, Color borderColor) {
-        Map<String, List<ChatSession>> grouped = {
-          'Today': [],
-          'Yesterday': [],
-          'Last 7 Days': [],
-          'Last 30 Days': [],
-          'Older': [],
-        };
-
-        DateTime now = DateTime.now();
-        for (var session in sessions) {
-          Duration diff = now.difference(session.createdAt);
-          if (diff.inDays == 0 &&
-              now.day == session.createdAt.day &&
-              now.month == session.createdAt.month &&
-              now.year == session.createdAt.year) {
-            grouped['Today']!.add(session);
-          } else if (diff.inDays == 1 ||
-              (diff.inDays < 1 && now.day != session.createdAt.day)) {
-            grouped['Yesterday']!.add(session);
-          } else if (diff.inDays <= 7) {
-            grouped['Last 7 Days']!.add(session);
-          } else if (diff.inDays <= 30) {
-            grouped['Last 30 Days']!.add(session);
-          } else {
-            grouped['Older']!.add(session);
-          }
-        }
-
-        List<Widget> widgets = [];
-        grouped.forEach((key, value) {
-          if (value.isNotEmpty) {
-            widgets.add(
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                child: Text(
-                  key,
-                  style: GoogleFonts.spaceMono(
-                    fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
-                    fontWeight: FontWeight.bold,
-                    color: textColor,
-                  ),
+      List<Widget> widgets = [];
+      grouped.forEach((key, value) {
+        if (value.isNotEmpty) {
+          widgets.add(
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              child: Text(
+                key,
+                style: GoogleFonts.spaceMono(
+                  fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
+                  fontWeight: FontWeight.bold,
+                  color: textColor,
                 ),
               ),
-            );
-            for (var session in value) {
-              widgets.add(
-                ListTile(
-                  title: Text(
-                    session.title == 'Untitled' ? '(New Chat)' : session.title,
-                    style: GoogleFonts.spaceMono(color: textColor, fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
-                  ),
-                  subtitle: Text(
-                    _formatDate(session.createdAt),
-                    style: GoogleFonts.spaceMono(color: textColor.withOpacity(0.6), fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
-                  ),
-                  onTap: () {
-                    Navigator.pop(context); // close drawer
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => OllamaChatPage(sessionId: session.id),
-                      ),
-                    );
-                  },
+            ),
+          );
+          for (var session in value) {
+            widgets.add(
+              ListTile(
+                title: Text(
+                  session.title == 'Untitled' ? '(New Chat)' : session.title,
+                  style: GoogleFonts.spaceMono(color: textColor, fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
                 ),
-              );
-              widgets.add(const Divider());
-            }
+                subtitle: Text(
+                  _formatDate(session.createdAt),
+                  style: GoogleFonts.spaceMono(color: textColor.withOpacity(0.6), fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
+                ),
+                onTap: () {
+                  Navigator.pop(context); // close drawer
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => OllamaChatPage(sessionId: session.id),
+                    ),
+                  );
+                },
+              ),
+            );
+            widgets.add(const Divider());
           }
-        });
+        }
+      });
 
-        return widgets;
-      }
-
-      String _formatDate(DateTime date) {
-        return "${date.year}-${date.month.toString().padLeft(2,'0')}-${date.day.toString().padLeft(2,'0')} ${date.hour.toString().padLeft(2,'0')}:${date.minute.toString().padLeft(2,'0')}";
-      }
+      return widgets;
     }
+
+    String _formatDate(DateTime date) {
+      return "${date.year}-${date.month.toString().padLeft(2,'0')}-${date.day.toString().padLeft(2,'0')} ${date.hour.toString().padLeft(2,'0')}:${date.minute.toString().padLeft(2,'0')}";
+    }
+  }
 
 // --------------------------------------------------
 // 1) ChatMessage model
