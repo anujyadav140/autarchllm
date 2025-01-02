@@ -183,15 +183,19 @@ class ChatSessionsProvider extends ChangeNotifier {
 class SettingsProvider extends ChangeNotifier {
   String _ollamaServerURI;
   String _systemPrompt;
+  String _defaultModel;
 
   SettingsProvider({
     required String initialOllamaServerURI,
     required String initialSystemPrompt,
+    required String initialDefaultModel,
   })  : _ollamaServerURI = initialOllamaServerURI,
-        _systemPrompt = initialSystemPrompt;
+        _systemPrompt = initialSystemPrompt,
+        _defaultModel = initialDefaultModel;
 
   String get ollamaServerURI => _ollamaServerURI;
   String get systemPrompt => _systemPrompt;
+  String get defaultModel => _defaultModel;
 
   set ollamaServerURI(String val) {
     _ollamaServerURI = val;
@@ -200,6 +204,11 @@ class SettingsProvider extends ChangeNotifier {
 
   set systemPrompt(String val) {
     _systemPrompt = val;
+    notifyListeners();
+  }
+
+  set defaultModel(String val) {
+    _defaultModel = val;
     notifyListeners();
   }
 }
@@ -249,6 +258,7 @@ Future<void> main() async {
   // Pull whatever was last saved, or fallback to defaults
   final savedServerURI = settingsBox.get('serverURI', defaultValue: 'http://xyz:11434');
   final savedSystemPrompt = settingsBox.get('systemPrompt', defaultValue: '');
+  final savedDefaultModel = settingsBox.get('defaultModel', defaultValue: '');
 
   runApp(
     MultiProvider(
@@ -258,6 +268,7 @@ Future<void> main() async {
           create: (_) => SettingsProvider(
             initialOllamaServerURI: savedServerURI,
             initialSystemPrompt: savedSystemPrompt,
+            initialDefaultModel: savedDefaultModel,
           ),
         ),
         ChangeNotifierProvider(
@@ -405,7 +416,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   // User-configurable settings
   String serverURI = '';
   String _systemPrompt = '';
-  String _defaultModel = ''; // default selection
+  // String _defaultModel = ''; // Removed local defaultModel
 
   // The list of all AI model options
   List<String> _modelOptions = [];
@@ -578,7 +589,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     final TextEditingController systemPromptController =
         TextEditingController(text: _systemPrompt);
 
-    String tempSelectedModel = _defaultModel;
+    String tempSelectedModel = settingsProvider.defaultModel;
     bool tempIsLightMode = themeProvider.isLightMode;
 
     await showDialog<void>(
@@ -621,10 +632,11 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 settingsProvider.systemPrompt =
                                     systemPromptController.text;
 
+                                settingsProvider.defaultModel = tempSelectedModel;
+
                                 setState(() {
                                   _systemPrompt =
                                       systemPromptController.text;
-                                  _defaultModel = tempSelectedModel;
                                   // Re-initialize the client with new URI
                                   final uriToUse = settingsProvider.ollamaServerURI.endsWith('/api')
                                       ? settingsProvider.ollamaServerURI
@@ -640,7 +652,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 // Persist settings to Hive
                                 final box = Hive.box('settings');
                                 await box.put('modelOptions', _modelOptions);
-                                await box.put('defaultModel', _defaultModel);
+                                await box.put('defaultModel', settingsProvider.defaultModel);
                                 await box.put('systemPrompt', _systemPrompt);
                                 await box.put('serverURI', serverUriController.text);
 
@@ -699,9 +711,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                         // Default Model
                         GestureDetector(
                           onTap: () {
-                            print(_defaultModel);
+                            print(settingsProvider.defaultModel);
                             print(serverUriController.text);
-                            Navigator.of(context).push(MaterialPageRoute(builder: (context) => ModelInformationPage(url: serverUriController.text, modelName: _defaultModel,)));
+                            Navigator.of(context).push(MaterialPageRoute(builder: (context) => ModelInformationPage(url: serverUriController.text, modelName: settingsProvider.defaultModel,)));
                           },
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -864,7 +876,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     // Access the existing SettingsProvider
     final settingsProvider =
         Provider.of<SettingsProvider>(context, listen: false);
-    _defaultModel = Hive.box('settings').get('defaultModel', defaultValue: '');
+    // _defaultModel = Hive.box('settings').get('defaultModel', defaultValue: ''); // Removed local defaultModel
 
     final chatSessionsProvider =
         Provider.of<ChatSessionsProvider>(context, listen: false);
@@ -901,13 +913,13 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
 
     final stream = client.generateCompletionStream(
       request: GenerateCompletionRequest(
-        model: _defaultModel,
+        model: settingsProvider.defaultModel,
         prompt: prompt,
         images: _pendingImages.map((image) => base64Encode(image!)).toList(),
       ),
     );
 
-    print("Using Model: $_defaultModel");
+    print("Using Model: ${settingsProvider.defaultModel}");
     print("System Prompt: ${settingsProvider.systemPrompt}");
     print("Server URI: ${client.baseUrl}");
     print("User Message: $messageText");
@@ -962,8 +974,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         setState(() {
           _modelOptions = modelNames;
           _isModelListPossible = true;
-          if (_modelOptions.isNotEmpty) {
-            _defaultModel = _modelOptions[0];
+          if (_modelOptions.isNotEmpty && 
+              Provider.of<SettingsProvider>(context, listen: false).defaultModel.isEmpty) {
+            Provider.of<SettingsProvider>(context, listen: false).defaultModel = _modelOptions[0];
           }
         });
       } else {
@@ -981,7 +994,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       // Save updated values in Hive
       final box = Hive.box('settings');
       await box.put('modelOptions', _modelOptions);
-      await box.put('defaultModel', _defaultModel);
+      await box.put('defaultModel', Provider.of<SettingsProvider>(context, listen: false).defaultModel);
       await box.put('systemPrompt', _systemPrompt);
       await box.put('serverURI', url);
     }
@@ -1052,6 +1065,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     final chatSessionsProvider = context.watch<ChatSessionsProvider>();
     _currentSession = chatSessionsProvider.getSessionById(widget.sessionId);
 
+    final settingsProvider = context.watch<SettingsProvider>();
+
     return SafeArea(
       child: Scaffold(
         appBar: AppBar(
@@ -1076,8 +1091,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                     style: GoogleFonts.spaceMono(color: textColor,fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
                     dropdownColor: isLight ? Colors.white : Colors.grey[800],
                     iconEnabledColor: iconColor,
-                    value: _defaultModel.isNotEmpty
-                        ? _defaultModel
+                    value: settingsProvider.defaultModel.isNotEmpty
+                        ? settingsProvider.defaultModel
                         : (_modelOptions.isNotEmpty ? _modelOptions[0] : null),
                     hint: const Text('Select Model'),
                     items: _modelOptions.map((String modelName) {
@@ -1088,13 +1103,11 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                     }).toList(),
                     onChanged: (String? newValue) async {
                       if (newValue == null) return;
-                      setState(() {
-                        _defaultModel = newValue;
-                      });
-                  
+                      settingsProvider.defaultModel = newValue;
+
                       // Persist in Hive
                       final box = Hive.box('settings');
-                      await box.put('defaultModel', _defaultModel);
+                      await box.put('defaultModel', newValue);
                       _scrollToBottom(); // Scroll after changing model
                     },
                   ),
