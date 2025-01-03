@@ -90,8 +90,10 @@ class InitialLoadup extends StatelessWidget {
               ),
               const SizedBox(height: 20),
               isEndpointSet
-                  ? _buildActiveEndpoint(context, endpointURL, isDesktopView, textColor, subtitleColor)
-                  : _buildSetupEndpoint(context, isDesktopView, textColor, subtitleColor, backgroundColor),
+                  ? _buildActiveEndpoint(context, endpointURL, isDesktopView,
+                      textColor, subtitleColor)
+                  : _buildSetupEndpoint(context, isDesktopView, textColor,
+                      subtitleColor, backgroundColor),
               const SizedBox(height: 20),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -143,7 +145,8 @@ class InitialLoadup extends StatelessWidget {
                         context: context,
                         builder: (context) => AlertDialog(
                           backgroundColor: backgroundColor,
-                          title: Text('How Can We Help You?', style: TextStyle(color: textColor)),
+                          title: Text('How Can We Help You?',
+                              style: TextStyle(color: textColor)),
                           content: Text(
                             'Getting started with Autarch is easy! Here are some steps to help you configure your Language Model endpoint and begin your AI journey.',
                             style: TextStyle(color: subtitleColor),
@@ -151,7 +154,8 @@ class InitialLoadup extends StatelessWidget {
                           actions: [
                             TextButton(
                               onPressed: () => Navigator.of(context).pop(),
-                              child: Text('Close', style: TextStyle(color: textColor)),
+                              child: Text('Close',
+                                  style: TextStyle(color: textColor)),
                             ),
                           ],
                         ),
@@ -170,12 +174,18 @@ class InitialLoadup extends StatelessWidget {
                 child: ListView(
                   scrollDirection: Axis.horizontal,
                   children: [
-                    _buildQueryChip(context, 'Tell me a joke', isDesktopView, textTheme, textColor),
-                    _buildQueryChip(context, 'What is Flutter?', isDesktopView, textTheme, textColor),
-                    _buildQueryChip(context, 'Explain quantum computing', isDesktopView, textTheme, textColor),
-                    _buildQueryChip(context, 'Best programming practices', isDesktopView, textTheme, textColor),
-                    _buildQueryChip(context, 'Upcoming tech trends', isDesktopView, textTheme, textColor),
-                    _buildQueryChip(context, 'Healthy living tips', isDesktopView, textTheme, textColor),
+                    _buildQueryChip(context, 'Tell me a joke', isDesktopView,
+                        textTheme, textColor),
+                    _buildQueryChip(context, 'What is Flutter?', isDesktopView,
+                        textTheme, textColor),
+                    _buildQueryChip(context, 'Explain quantum computing',
+                        isDesktopView, textTheme, textColor),
+                    _buildQueryChip(context, 'Best programming practices',
+                        isDesktopView, textTheme, textColor),
+                    _buildQueryChip(context, 'Upcoming tech trends',
+                        isDesktopView, textTheme, textColor),
+                    _buildQueryChip(context, 'Healthy living tips',
+                        isDesktopView, textTheme, textColor),
                   ],
                 ),
               ),
@@ -186,7 +196,8 @@ class InitialLoadup extends StatelessWidget {
     );
   }
 
-  Widget _buildActiveEndpoint(BuildContext context, String? url, bool isDesktopView, Color textColor, Color subtitleColor) {
+  Widget _buildActiveEndpoint(BuildContext context, String? url,
+      bool isDesktopView, Color textColor, Color subtitleColor) {
     final theme = Theme.of(context);
     final textTheme = theme.textTheme;
 
@@ -232,7 +243,8 @@ class InitialLoadup extends StatelessWidget {
     );
   }
 
-  Widget _buildSetupEndpoint(BuildContext context, bool isDesktopView, Color textColor, Color subtitleColor, Color backgroundColor) {
+  Widget _buildSetupEndpoint(BuildContext context, bool isDesktopView,
+      Color textColor, Color subtitleColor, Color backgroundColor) {
     final theme = Theme.of(context);
     final textTheme = theme.textTheme;
 
@@ -297,7 +309,8 @@ class InitialLoadup extends StatelessWidget {
     );
   }
 
-  Widget _buildQueryChip(BuildContext context, String query, bool isDesktopView, TextTheme textTheme, Color textColor) {
+  Widget _buildQueryChip(BuildContext context, String query, bool isDesktopView,
+      TextTheme textTheme, Color textColor) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6.0),
       child: ActionChip(
@@ -308,7 +321,7 @@ class InitialLoadup extends StatelessWidget {
                 ? textTheme.bodyMedium?.fontSize
                 : textTheme.bodySmall?.fontSize,
             fontWeight: FontWeight.bold,
-            color: isDarkMode ?Colors.black : Colors.white,
+            color: isDarkMode ? Colors.black : Colors.white,
           ),
         ),
         backgroundColor: textColor,
