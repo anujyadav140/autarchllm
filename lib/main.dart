@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show File;
 import 'dart:typed_data';
+import 'package:autarchllm/initial.dart';
 import 'package:autarchllm/modelinfo.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -72,7 +73,7 @@ class ChatSession {
 class ChatSessionsProvider extends ChangeNotifier {
   List<ChatSession> _sessions = [];
   List<ChatSession> get sessions => _sessions;
-
+  bool initialLoadUp = false;
   late Box<dynamic> _chatsBox;
 
   /// Initialize the provider by opening the Hive box and loading sessions
@@ -118,6 +119,7 @@ class ChatSessionsProvider extends ChangeNotifier {
       createdAt: DateTime.now(),
     );
     _sessions.insert(0, newSession);
+    initialLoadUp = true;
     await _saveSessionsToHive();
     notifyListeners();
     return newSession;
@@ -429,7 +431,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
 
   @override
   void initState() {
-    super.initState();
+    super.initState();       
 
     final settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
     _systemPrompt = settingsProvider.systemPrompt;
@@ -450,7 +452,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     final chatSessionsProvider =
         Provider.of<ChatSessionsProvider>(context, listen: false);
     _currentSession = chatSessionsProvider.getSessionById(widget.sessionId);
-
+    chatSessionsProvider.initialLoadUp = true;
     // Fetch model options after initializing the client
     fetchTags(baseUri);
 
@@ -866,6 +868,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   // 3C) Streaming chat
   // --------------------------------------------------
   Future<void> _sendMessage(String messageText) async {
+      final chatSessionsProvider =
+        Provider.of<ChatSessionsProvider>(context, listen: false);
+        chatSessionsProvider.initialLoadUp = false;
     // Prevent sending if there's no text and no pending images
     if (messageText.trim().isEmpty && _pendingImages.isEmpty) return;
 
@@ -877,9 +882,6 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     final settingsProvider =
         Provider.of<SettingsProvider>(context, listen: false);
     // _defaultModel = Hive.box('settings').get('defaultModel', defaultValue: ''); // Removed local defaultModel
-
-    final chatSessionsProvider =
-        Provider.of<ChatSessionsProvider>(context, listen: false);
 
     // Add user text message if any
     if (messageText.trim().isNotEmpty) {
@@ -1079,6 +1081,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                 style: GoogleFonts.spaceMono(
                   color: textColor,
                   fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
+                  fontWeight: FontWeight.bold,  
                 ),
               ),
               const SizedBox(width: 25),
@@ -1177,7 +1180,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
             children: [
               // 1) Messages area
               Expanded(
-                child: Container(
+                child: chatSessionsProvider.initialLoadUp ? InitialLoadup(isEndpointSet: true, isDarkMode: !themeProvider._isLightMode,) : Container(
                   color: isLight ? Colors.white : const Color(0xFF1B1B1D),
                   padding: EdgeInsets.only(
                     left: kIsWeb ? 100.0 : 15.0,
