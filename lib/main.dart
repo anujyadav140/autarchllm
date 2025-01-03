@@ -18,6 +18,13 @@ import 'package:http/http.dart' as http;
 import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+//ISSUES:
+//FIX THE SCROLL TO THE BOTTOM ISSUES
+//FIX THE IMAGE UPLOAD ISSUES
+//FIX THE MODEL INFORMATION PAGE ISSUES
+//FIX THE SETTINGS PAGE ISSUES
+
+
 // --------------------------------------------------
 // 0) ChatSession and provider for multiple sessions
 // --------------------------------------------------
@@ -216,13 +223,17 @@ class SettingsProvider extends ChangeNotifier {
 }
 
 class ThemeProvider extends ChangeNotifier {
-  bool _isLightMode = true; // default is light mode
+  bool _isLightMode;
+
+  ThemeProvider({required bool initialIsLightMode}) : _isLightMode = initialIsLightMode;
 
   bool get isLightMode => _isLightMode;
 
   set isLightMode(bool newValue) {
-    _isLightMode = newValue;
-    notifyListeners();
+    if (_isLightMode != newValue) {
+      _isLightMode = newValue;
+      notifyListeners();
+    }
   }
 
   ThemeData get themeData {
@@ -261,11 +272,12 @@ Future<void> main() async {
   final savedServerURI = settingsBox.get('serverURI', defaultValue: 'http://xyz:11434');
   final savedSystemPrompt = settingsBox.get('systemPrompt', defaultValue: '');
   final savedDefaultModel = settingsBox.get('defaultModel', defaultValue: '');
+  final savedIsLightMode = settingsBox.get('isLightMode', defaultValue: true);
 
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider(create: (_) => ThemeProvider(initialIsLightMode: savedIsLightMode)),
         ChangeNotifierProvider(
           create: (_) => SettingsProvider(
             initialOllamaServerURI: savedServerURI,
@@ -452,7 +464,11 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     final chatSessionsProvider =
         Provider.of<ChatSessionsProvider>(context, listen: false);
     _currentSession = chatSessionsProvider.getSessionById(widget.sessionId);
-    chatSessionsProvider.initialLoadUp = true;
+    if (chatSessionsProvider._chatsBox.isEmpty) {
+      // chatSessionsProvider.createNewSession();
+      chatSessionsProvider.initialLoadUp = true;
+    }
+
     // Fetch model options after initializing the client
     fetchTags(baseUri);
 
@@ -471,15 +487,16 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
 
   // Method to scroll to the bottom of the ListView
   void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+    // WidgetsBinding.instance.addPostFrameCallback((_) {
+    //   if (_scrollController.hasClients) {
+        // _scrollController.animateTo(
+        //   _scrollController.position.maxScrollExtent,
+        //   duration: const Duration(milliseconds: 300),
+        //   curve: Curves.easeOut,
+        // );
+        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+    //   }
+    // });
   }
 
   Future<void> clearHiveBox() async {
@@ -592,7 +609,6 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         TextEditingController(text: _systemPrompt);
 
     String tempSelectedModel = settingsProvider.defaultModel;
-    bool tempIsLightMode = themeProvider.isLightMode;
 
     await showDialog<void>(
       context: context,
@@ -649,8 +665,6 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                   // Fetch model options with new URI
                                   fetchTags(uriToUse);
                                 });
-                                // Update theme
-                                themeProvider.isLightMode = tempIsLightMode;
                                 // Persist settings to Hive
                                 final box = Hive.box('settings');
                                 await box.put('modelOptions', _modelOptions);
@@ -772,12 +786,15 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                               style: GoogleFonts.roboto(fontSize: 15),
                             ),
                             DropdownButton<bool>(
-                              value: tempIsLightMode,
-                              onChanged: (bool? newValue) {
+                              value: themeProvider.isLightMode,
+                              onChanged: (bool? newValue) async {
                                 if (newValue == null) return;
-                                setStateDialog(() {
-                                  tempIsLightMode = newValue;
-                                });
+                                // Update ThemeProvider immediately
+                                themeProvider.isLightMode = newValue;
+
+                                // Save the theme setting to Hive immediately
+                                final box = Hive.box('settings');
+                                await box.put('isLightMode', newValue);
                               },
                               items: const [
                                 DropdownMenuItem<bool>(
@@ -1180,7 +1197,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
             children: [
               // 1) Messages area
               Expanded(
-                child: chatSessionsProvider.initialLoadUp ? InitialLoadup(isEndpointSet: true, isDarkMode: !themeProvider._isLightMode,) : Container(
+                child: chatSessionsProvider.initialLoadUp  ? InitialLoadup(isEndpointSet: true, isDarkMode: !themeProvider.isLightMode,) : Container(
                   color: isLight ? Colors.white : const Color(0xFF1B1B1D),
                   padding: EdgeInsets.only(
                     left: kIsWeb ? 100.0 : 15.0,
