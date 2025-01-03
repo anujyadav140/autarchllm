@@ -1,6 +1,6 @@
 # Autarch LLM
 
-Autarch is an open source, Ollama compatible, flutter web & android app for working with privately hosted models such as Llama 2, Mistral, Gemini and more. It's essentially ChatGPT app UI that connects to your private models hosted through ngrok. 
+Autarch is an Ollama compatabile, flutter web, android and windows app for working with privately hosted models such as Llama 2, Mistral, Gemini and more. It's essentially ChatGPT app UI that connects to your private models hosted through ngrok/localhost. 
 
 ## Getting Started
 
