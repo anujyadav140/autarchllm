@@ -1,3 +1,4 @@
+import 'package:autarchllm/main.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -6,12 +7,14 @@ class InitialLoadup extends StatelessWidget {
   final bool isDarkMode;
   final bool isEndpointSet;
   final String? endpointURL;
+  final VoidCallback onSettingsPressed;
+  final ValueChanged<String> onPromptChanged; // Add this line
 
   const InitialLoadup({
     super.key,
     required this.isEndpointSet,
     this.endpointURL,
-    required this.isDarkMode,
+    required this.isDarkMode, required this.onSettingsPressed, required this.onPromptChanged,
   });
 
   bool _isDesktop(BuildContext context) {
@@ -169,7 +172,7 @@ class InitialLoadup extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 30),
-              SizedBox(
+              isEndpointSet ? SizedBox(
                 height: isDesktopView ? 70 : 60,
                 child: ListView(
                   scrollDirection: Axis.horizontal,
@@ -188,7 +191,7 @@ class InitialLoadup extends StatelessWidget {
                         isDesktopView, textTheme, textColor),
                   ],
                 ),
-              ),
+              ) : const SizedBox.shrink(),
             ],
           ),
         ),
@@ -285,7 +288,10 @@ class InitialLoadup extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         ElevatedButton.icon(
-          onPressed: () {},
+          onPressed: () {
+            //call the ollamachatpage
+           onSettingsPressed();
+          },
           icon: const Icon(Icons.settings),
           label: Text(
             'Go to Settings',
@@ -329,9 +335,10 @@ class InitialLoadup extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
         ),
         onPressed: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('You selected: "$query"')),
-          );
+          // ScaffoldMessenger.of(context).showSnackBar(
+          //   SnackBar(content: Text('You selected: "$query"')),
+          // );
+          onPromptChanged(query);
         },
       ),
     );

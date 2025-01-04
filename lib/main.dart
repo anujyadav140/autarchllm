@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io' show File;
 import 'dart:typed_data';
 import 'package:autarchllm/initial.dart';
-import 'package:autarchllm/modelinfo.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,12 +16,6 @@ import 'package:http/http.dart' as http;
 // ----------------- HIVE imports --------------------
 import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-
-//ISSUES:
-//FIX THE SCROLL TO THE BOTTOM ISSUES
-//FIX THE IMAGE UPLOAD ISSUES
-//FIX THE MODEL INFORMATION PAGE ISSUES
-//FIX THE SETTINGS PAGE ISSUES
 
 // --------------------------------------------------
 // 0) ChatSession and provider for multiple sessions
@@ -245,7 +238,7 @@ class ThemeProvider extends ChangeNotifier {
       );
     } else {
       return ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF1B1B1D),
+        scaffoldBackgroundColor: Colors.black,
       );
     }
   }
@@ -281,7 +274,8 @@ Future<void> main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(
-            create: (_) => ThemeProvider(initialIsLightMode: savedIsLightMode)),
+            create: (_) =>
+                ThemeProvider(initialIsLightMode: savedIsLightMode)),
         ChangeNotifierProvider(
           create: (_) => SettingsProvider(
             initialOllamaServerURI: savedServerURI,
@@ -441,7 +435,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   List<String> _modelOptions = [];
 
   late OllamaClient client;
-  bool _isModelListPossible = false;
+  late bool _isModelListPossible = false;
 
   // ** New: List to hold pending images before sending **
   List<Uint8List?> _pendingImages = [];
@@ -472,7 +466,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     _currentSession = chatSessionsProvider.getSessionById(widget.sessionId);
     if (chatSessionsProvider._chatsBox.isEmpty) {
       // chatSessionsProvider.createNewSession();
-      chatSessionsProvider.initialLoadUp = true;
+      chatSessionsProvider.initialLoadUp = false;
     }
 
     // Fetch model options after initializing the client
@@ -493,16 +487,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
 
   // Method to scroll to the bottom of the ListView
   void _scrollToBottom() {
-    // WidgetsBinding.instance.addPostFrameCallback((_) {
-    //   if (_scrollController.hasClients) {
-    // _scrollController.animateTo(
-    //   _scrollController.position.maxScrollExtent,
-    //   duration: const Duration(milliseconds: 300),
-    //   curve: Curves.easeOut,
-    // );
-    _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-    //   }
-    // });
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+    }
   }
 
   Future<void> clearHiveBox() async {
@@ -704,7 +691,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                     fontSize: Theme.of(context)
                                         .textTheme
                                         .bodyLarge
-                                        ?.fontSize, fontWeight: FontWeight.bold),
+                                        ?.fontSize,
+                                    fontWeight: FontWeight.bold),
                               ),
                             ),
                           ],
@@ -768,14 +756,6 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                         // Default Model
                         GestureDetector(
                           onTap: () {
-                            // print(settingsProvider.defaultModel);
-                            // print(serverUriController.text);
-                            // Navigator.of(context).push(MaterialPageRoute(
-                            //     builder: (context) => ModelInformationPage(
-                            //           url: serverUriController.text,
-                            //           modelName: settingsProvider.defaultModel,
-                            //           isDarkMode: !themeProvider.isLightMode,
-                            //         )));
                             infoClick();
                           },
                           child: Row(
@@ -825,7 +805,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 ],
                               ),
                               IconButton(
-                                  onPressed: infoClick, icon: Icon(Icons.info))
+                                  onPressed: infoClick,
+                                  icon: Icon(Icons.info))
                             ],
                           ),
                         ),
@@ -956,7 +937,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
             },
           ),
         );
-      },
+      },    
     );
   }
 
@@ -964,6 +945,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   // 3C) Streaming chat
   // --------------------------------------------------
   Future<void> _sendMessage(String messageText) async {
+    
     final chatSessionsProvider =
         Provider.of<ChatSessionsProvider>(context, listen: false);
     chatSessionsProvider.initialLoadUp = false;
@@ -1050,7 +1032,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     _controller.clear();
   }
 
-  Future<void> fetchTags(String url) async {
+  Future<bool> fetchTags(String url) async {
     final Uri uri = Uri.parse('$url/tags'); // Adjust endpoint as needed
 
     try {
@@ -1064,6 +1046,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       );
 
       if (response.statusCode == 200) {
+        isEndpointSet = true;
         Map<String, dynamic> jsonData = json.decode(response.body);
         List<dynamic> models = jsonData['models'];
         List<String> modelNames =
@@ -1084,12 +1067,14 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         debugPrint("Error in fetchTags: ${response.statusCode}");
         setState(() {
           _isModelListPossible = false;
+                  isEndpointSet = false;
         });
       }
     } catch (e) {
       debugPrint("Exception while fetching tags: $e");
       setState(() {
         _isModelListPossible = false;
+         isEndpointSet = false;
       });
     } finally {
       // Save updated values in Hive
@@ -1100,6 +1085,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       await box.put('systemPrompt', _systemPrompt);
       await box.put('serverURI', url);
     }
+    return _isModelListPossible;
   }
 
   // --------------------------------------------------
@@ -1154,11 +1140,30 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     );
   }
 
+  late bool isEndpointSet = _isModelListPossible;
+
+  void checkEndpointValidity() async{
+    
+    final Uri uri = Uri.parse('$serverURI/tags'); // Adjust endpoint as needed
+    print(serverURI);
+
+
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          // Removed CORS headers as they should be managed server-side
+        },
+      );
+  }
+
   // --------------------------------------------------
   // 4) Build UI
   // --------------------------------------------------
   @override
   Widget build(BuildContext context) {
+    checkEndpointValidity();
     final themeProvider = context.watch<ThemeProvider>();
     final isLight = themeProvider.isLightMode;
 
@@ -1172,6 +1177,16 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     _currentSession = chatSessionsProvider.getSessionById(widget.sessionId);
 
     final settingsProvider = context.watch<SettingsProvider>();
+
+    String? selectedPrompt;
+
+    void handlePromptChanged(String newPrompt) {
+      setState(() {
+        _controller.text = newPrompt;
+      });
+      // You can now use _selectedPrompt as needed
+      print("Selected Prompt: $selectedPrompt");
+    }
 
     return SafeArea(
       child: Scaffold(
@@ -1293,11 +1308,12 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
             children: [
               // 1) Messages area
               Expanded(
-                child: chatSessionsProvider.initialLoadUp &&
-                        chatSessionsProvider._chatsBox.isEmpty
+                child: chatSessionsProvider.initialLoadUp 
                     ? InitialLoadup(
-                        isEndpointSet: true,
+                        isEndpointSet: isEndpointSet,
                         isDarkMode: !themeProvider.isLightMode,
+                        endpointURL: serverURI, onSettingsPressed: _openSettingsDialog,
+                        onPromptChanged: handlePromptChanged, // Pass the callback
                       )
                     : Container(
                         color: isLight ? Colors.white : const Color(0xFF1B1B1D),
@@ -1370,7 +1386,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                   ),
                 ),
 
-              if (_isLoading) const LinearProgressIndicator(),
+              if (_isLoading)  LinearProgressIndicator(color: isLight ? Colors.black : Colors.white ,),
 
               // 2) Bottom input area
               Padding(
@@ -1444,8 +1460,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                             color: iconColor)
                                         : Icon(Icons.hourglass_top,
                                             color: iconColor),
-                                    onPressed: () =>
-                                        _sendMessage(_controller.text),
+                                    onPressed: () {
+                                        _sendMessage(_controller.text);
+                                    }
                                   ),
                                 ],
                               ),
@@ -1716,6 +1733,103 @@ class ChatBubble extends StatelessWidget {
           child: contentWidget,
         ),
       ],
+    );
+  }
+}
+
+// --------------------------------------------------
+// Placeholder for InitialLoadup widget
+// --------------------------------------------------
+// class InitialLoadup extends StatelessWidget {
+//   final bool isEndpointSet;
+//   final bool isDarkMode;
+//   final String endpointURL;
+//   final VoidCallback onSettingsPressed;
+//   final Function(String) onPromptChanged;
+
+//   const InitialLoadup({
+//     Key? key,
+//     required this.isEndpointSet,
+//     required this.isDarkMode,
+//     required this.endpointURL,
+//     required this.onSettingsPressed,
+//     required this.onPromptChanged,
+//   }) : super(key: key);
+
+//   @override
+//   Widget build(BuildContext context) {
+//     if (isEndpointSet) {
+//       return Center(
+//         child: Text(
+//           'Ready to chat!',
+//           style: GoogleFonts.spaceMono(
+//             fontSize: 20,
+//             color: isDarkMode ? Colors.white : Colors.black,
+//           ),
+//         ),
+//       );
+//     } else {
+//       return Center(
+//         child: Column(
+//           mainAxisAlignment: MainAxisAlignment.center,
+//           children: [
+//             Text(
+//               'Endpoint not set or invalid.',
+//               style: GoogleFonts.spaceMono(
+//                 fontSize: 18,
+//                 color: isDarkMode ? Colors.white : Colors.black,
+//               ),
+//             ),
+//             SizedBox(height: 20),
+//             ElevatedButton(
+//               onPressed: onSettingsPressed,
+//               child: Text(
+//                 'Open Settings',
+//                 style: GoogleFonts.spaceMono(),
+//               ),
+//             ),
+//           ],
+//         ),
+//       );
+//     }
+//   }
+// }
+
+// --------------------------------------------------
+// Placeholder for ModelInformationPage widget
+// --------------------------------------------------
+class ModelInformationPage extends StatelessWidget {
+  final String url;
+  final String modelName;
+  final bool isDarkMode;
+
+  const ModelInformationPage({
+    Key? key,
+    required this.url,
+    required this.modelName,
+    required this.isDarkMode,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    // Implement your model information page here
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          'Model Information',
+          style: GoogleFonts.spaceMono(),
+        ),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Text(
+          'Model Name: $modelName\nServer URL: $url',
+          style: GoogleFonts.spaceMono(
+            color: isDarkMode ? Colors.white : Colors.black,
+            fontSize: 16,
+          ),
+        ),
+      ),
     );
   }
 }
