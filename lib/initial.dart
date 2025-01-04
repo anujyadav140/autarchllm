@@ -23,6 +23,7 @@ class InitialLoadup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    double height = MediaQuery.of(context).size.height;
     final isDesktopView = _isDesktop(context);
     final theme = Theme.of(context);
     final textTheme = theme.textTheme;
@@ -36,7 +37,7 @@ class InitialLoadup extends StatelessWidget {
       body: SingleChildScrollView(
         child: Container(
           color: backgroundColor,
-          padding: const EdgeInsets.all(16.0),
+          padding: EdgeInsets.only(top: height * 0.08),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [

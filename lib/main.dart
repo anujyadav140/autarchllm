@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show File;
+import 'dart:io' show File, HttpClient;
 import 'dart:typed_data';
 import 'package:autarchllm/initial.dart';
 import 'package:autarchllm/modelinfo.dart';
+import 'package:autarchllm/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -265,6 +266,7 @@ Future<void> main() async {
   await chatSessionsProvider.init();
 
   // Pull whatever was last saved, or fallback to defaults
+  // ** Changed default to use 'http://' instead of 'https://' **
   final savedServerURI =
       settingsBox.get('serverURI', defaultValue: 'http://xyz:11434');
   final savedSystemPrompt = settingsBox.get('systemPrompt', defaultValue: '');
@@ -439,7 +441,6 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
 
   // ** New: List to hold pending images before sending **
   List<Uint8List?> _pendingImages = [];
-
   @override
   void initState() {
     super.initState();
@@ -450,7 +451,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     serverURI = settingsProvider.ollamaServerURI;
 
     // Define a default URI
-    const String defaultURI = 'https://default.server.com';
+    // ** Ensure the default uses 'http://' to prevent TLS handshake issues **
+    const String defaultURI = 'http://default.server.com';
 
     // Use the provided URI or fallback to the default
     final uriToUse = serverURI.isNotEmpty ? serverURI : defaultURI;
@@ -459,6 +461,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     final baseUri = uriToUse.endsWith('/api') ? uriToUse : '$uriToUse/api';
 
     client = OllamaClient(baseUrl: baseUri);
+    AutarchService().checkIfEndpointSet(baseUri);
 
     // Load the session from ChatSessionsProvider
     final chatSessionsProvider =
@@ -466,7 +469,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     _currentSession = chatSessionsProvider.getSessionById(widget.sessionId);
     if (chatSessionsProvider._chatsBox.isEmpty) {
       // chatSessionsProvider.createNewSession();
-      chatSessionsProvider.initialLoadUp = false;
+      chatSessionsProvider.initialLoadUp = true;
     }
 
     // Fetch model options after initializing the client
@@ -648,6 +651,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                             ),
                             TextButton(
                               onPressed: () async {
+                                
                                 // Save the server URI to the provider
                                 settingsProvider.ollamaServerURI =
                                     serverUriController.text;
@@ -666,6 +670,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                           .endsWith('/api')
                                       ? settingsProvider.ollamaServerURI
                                       : '${settingsProvider.ollamaServerURI}/api';
+                                AutarchService().checkIfEndpointSet(uriToUse);
+                                ;
                                   client = OllamaClient(
                                     baseUrl: uriToUse,
                                   );
@@ -731,10 +737,6 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                             border: OutlineInputBorder(),
                           ),
                           keyboardType: TextInputType.url,
-                          inputFormatters: [
-                            FilteringTextInputFormatter.allow(
-                                RegExp(r'https?://[\w.-]+')),
-                          ],
                         ),
                         const SizedBox(height: 12),
 
@@ -805,7 +807,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 ],
                               ),
                               IconButton(
-                                  onPressed: infoClick, icon: Icon(Icons.info))
+                                  onPressed: infoClick,
+                                  icon: Icon(Icons.info))
                             ],
                           ),
                         ),
@@ -977,6 +980,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   // 3C) Streaming chat
   // --------------------------------------------------
   Future<void> _sendMessage(String messageText) async {
+        print("Server URI: ${client.baseUrl}");
+    print("User Message: $messageText");
     final chatSessionsProvider =
         Provider.of<ChatSessionsProvider>(context, listen: false);
     chatSessionsProvider.initialLoadUp = false;
@@ -987,6 +992,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       _isLoading = true;
     });
 
+    print("Server URI: ${client.baseUrl}");
+    print("User Message: $messageText");
     // Access the existing SettingsProvider
     final settingsProvider =
         Provider.of<SettingsProvider>(context, listen: false);
@@ -1077,7 +1084,6 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       );
 
       if (response.statusCode == 200) {
-        isEndpointSet = true;
         Map<String, dynamic> jsonData = json.decode(response.body);
         List<dynamic> models = jsonData['models'];
         List<String> modelNames =
@@ -1098,14 +1104,12 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         debugPrint("Error in fetchTags: ${response.statusCode}");
         setState(() {
           _isModelListPossible = false;
-          isEndpointSet = false;
         });
       }
     } catch (e) {
       debugPrint("Exception while fetching tags: $e");
       setState(() {
         _isModelListPossible = false;
-        isEndpointSet = false;
       });
     } finally {
       // Save updated values in Hive
@@ -1171,28 +1175,11 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     );
   }
 
-  late bool isEndpointSet = _isModelListPossible;
-
-  void checkEndpointValidity() async {
-    final Uri uri = Uri.parse('$serverURI/tags'); // Adjust endpoint as needed
-    print(serverURI);
-
-    final response = await http.get(
-      uri,
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        // Removed CORS headers as they should be managed server-side
-      },
-    );
-  }
-
   // --------------------------------------------------
   // 4) Build UI
   // --------------------------------------------------
   @override
   Widget build(BuildContext context) {
-    checkEndpointValidity();
     final themeProvider = context.watch<ThemeProvider>();
     final isLight = themeProvider.isLightMode;
 
@@ -1338,7 +1325,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
               Expanded(
                 child: chatSessionsProvider.initialLoadUp
                     ? InitialLoadup(
-                        isEndpointSet: isEndpointSet,
+                        isEndpointSet: AutarchService().isEndpointSet,
                         isDarkMode: !themeProvider.isLightMode,
                         endpointURL: serverURI,
                         onSettingsPressed: _openSettingsDialog,
@@ -1785,4 +1772,4 @@ class ChatBubble extends StatelessWidget {
       ],
     );
   }
-} 
+}
