@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io' show File;
 import 'dart:typed_data';
 import 'package:autarchllm/initial.dart';
+import 'package:autarchllm/modelinfo.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -274,8 +275,7 @@ Future<void> main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(
-            create: (_) =>
-                ThemeProvider(initialIsLightMode: savedIsLightMode)),
+            create: (_) => ThemeProvider(initialIsLightMode: savedIsLightMode)),
         ChangeNotifierProvider(
           create: (_) => SettingsProvider(
             initialOllamaServerURI: savedServerURI,
@@ -805,8 +805,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 ],
                               ),
                               IconButton(
-                                  onPressed: infoClick,
-                                  icon: Icon(Icons.info))
+                                  onPressed: infoClick, icon: Icon(Icons.info))
                             ],
                           ),
                         ),
@@ -834,7 +833,11 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                           children: [
                             Text(
                               'Appearance',
-                              style: GoogleFonts.spaceMono(fontSize: Theme.of(context).textTheme.bodyMedium?.fontSize),
+                              style: GoogleFonts.spaceMono(
+                                  fontSize: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.fontSize),
                             ),
                             DropdownButton<bool>(
                               value: themeProvider.isLightMode,
@@ -847,14 +850,24 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 final box = Hive.box('settings');
                                 await box.put('isLightMode', newValue);
                               },
-                              items:  [
+                              items: [
                                 DropdownMenuItem<bool>(
                                   value: true,
-                                  child: Text('Light', style: GoogleFonts.spaceMono(fontSize: Theme.of(context).textTheme.bodySmall?.fontSize)),
+                                  child: Text('Light',
+                                      style: GoogleFonts.spaceMono(
+                                          fontSize: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall
+                                              ?.fontSize)),
                                 ),
                                 DropdownMenuItem<bool>(
                                   value: false,
-                                  child: Text('Dark',style: GoogleFonts.spaceMono(fontSize: Theme.of(context).textTheme.bodySmall?.fontSize)),
+                                  child: Text('Dark',
+                                      style: GoogleFonts.spaceMono(
+                                          fontSize: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall
+                                              ?.fontSize)),
                                 ),
                               ],
                             ),
@@ -869,23 +882,43 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                             final confirm = await showDialog<bool>(
                               context: context,
                               builder: (context) => AlertDialog(
-                                title:  Text('Confirm Deletion',style: GoogleFonts.spaceMono(fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize, fontWeight: FontWeight.bold)),
+                                title: Text('Confirm Deletion',
+                                    style: GoogleFonts.spaceMono(
+                                        fontSize: Theme.of(context)
+                                            .textTheme
+                                            .bodyLarge
+                                            ?.fontSize,
+                                        fontWeight: FontWeight.bold)),
                                 content: Text(
-                                    'Are you sure you want to delete all conversations?'
-                                    ,style: GoogleFonts.spaceMono(fontSize: Theme.of(context).textTheme.bodySmall?.fontSize)),
-                                    
+                                    'Are you sure you want to delete all conversations?',
+                                    style: GoogleFonts.spaceMono(
+                                        fontSize: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.fontSize)),
                                 actions: [
                                   TextButton(
                                     onPressed: () =>
                                         Navigator.of(context).pop(false),
-                                    child:  Text('Cancel',style: GoogleFonts.spaceMono(fontSize: Theme.of(context).textTheme.bodyMedium?.fontSize, fontWeight: FontWeight.bold)),
+                                    child: Text('Cancel',
+                                        style: GoogleFonts.spaceMono(
+                                            fontSize: Theme.of(context)
+                                                .textTheme
+                                                .bodyMedium
+                                                ?.fontSize,
+                                            fontWeight: FontWeight.bold)),
                                   ),
                                   TextButton(
                                     onPressed: () =>
                                         Navigator.of(context).pop(true),
-                                    child:  Text(
+                                    child: Text(
                                       'Delete',
-                                      style: GoogleFonts.spaceMono(fontSize: Theme.of(context).textTheme.bodyMedium?.fontSize, fontWeight: FontWeight.bold),
+                                      style: GoogleFonts.spaceMono(
+                                          fontSize: Theme.of(context)
+                                              .textTheme
+                                              .bodyMedium
+                                              ?.fontSize,
+                                          fontWeight: FontWeight.bold),
                                     ),
                                   ),
                                 ],
@@ -923,7 +956,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                     .textTheme
                                     .bodyMedium
                                     ?.fontSize,
-                                    fontWeight: FontWeight.bold,
+                                fontWeight: FontWeight.bold,
                                 color: Colors.red,
                               ),
                             ),
@@ -937,15 +970,13 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
             },
           ),
         );
-      },    
+      },
     );
   }
-
   // --------------------------------------------------
   // 3C) Streaming chat
   // --------------------------------------------------
   Future<void> _sendMessage(String messageText) async {
-    
     final chatSessionsProvider =
         Provider.of<ChatSessionsProvider>(context, listen: false);
     chatSessionsProvider.initialLoadUp = false;
@@ -1067,14 +1098,14 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         debugPrint("Error in fetchTags: ${response.statusCode}");
         setState(() {
           _isModelListPossible = false;
-                  isEndpointSet = false;
+          isEndpointSet = false;
         });
       }
     } catch (e) {
       debugPrint("Exception while fetching tags: $e");
       setState(() {
         _isModelListPossible = false;
-         isEndpointSet = false;
+        isEndpointSet = false;
       });
     } finally {
       // Save updated values in Hive
@@ -1142,20 +1173,18 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
 
   late bool isEndpointSet = _isModelListPossible;
 
-  void checkEndpointValidity() async{
-    
+  void checkEndpointValidity() async {
     final Uri uri = Uri.parse('$serverURI/tags'); // Adjust endpoint as needed
     print(serverURI);
 
-
-      final response = await http.get(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          // Removed CORS headers as they should be managed server-side
-        },
-      );
+    final response = await http.get(
+      uri,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        // Removed CORS headers as they should be managed server-side
+      },
+    );
   }
 
   // --------------------------------------------------
@@ -1273,10 +1302,9 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                 child: ListView(
                   padding: EdgeInsets.zero,
                   children: [
-                    // DrawerHeader can be customized if needed
-                    SizedBox(height: 16),
+                   SizedBox(height: 16),
                     ..._buildGroupedSessions(
-                        chatSessionsProvider.sessions, textColor, borderColor),
+                        chatSessionsProvider.sessions, textColor, borderColor, isLight),
                   ],
                 ),
               ),
@@ -1308,12 +1336,14 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
             children: [
               // 1) Messages area
               Expanded(
-                child: chatSessionsProvider.initialLoadUp 
+                child: chatSessionsProvider.initialLoadUp
                     ? InitialLoadup(
                         isEndpointSet: isEndpointSet,
                         isDarkMode: !themeProvider.isLightMode,
-                        endpointURL: serverURI, onSettingsPressed: _openSettingsDialog,
-                        onPromptChanged: handlePromptChanged, // Pass the callback
+                        endpointURL: serverURI,
+                        onSettingsPressed: _openSettingsDialog,
+                        onPromptChanged:
+                            handlePromptChanged, // Pass the callback
                       )
                     : Container(
                         color: isLight ? Colors.white : const Color(0xFF1B1B1D),
@@ -1386,7 +1416,10 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                   ),
                 ),
 
-              if (_isLoading)  LinearProgressIndicator(color: isLight ? Colors.black : Colors.white ,),
+              if (_isLoading)
+                LinearProgressIndicator(
+                  color: isLight ? Colors.black : Colors.white,
+                ),
 
               // 2) Bottom input area
               Padding(
@@ -1453,17 +1486,16 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
 
                                   // Send text and images
                                   IconButton(
-                                    iconSize: 24,
-                                    icon: !_isLoading
-                                        ? Icon(
-                                            Icons.arrow_circle_right_outlined,
-                                            color: iconColor)
-                                        : Icon(Icons.hourglass_top,
-                                            color: iconColor),
-                                    onPressed: () {
+                                      iconSize: 24,
+                                      icon: !_isLoading
+                                          ? Icon(
+                                              Icons.arrow_circle_right_outlined,
+                                              color: iconColor)
+                                          : Icon(Icons.hourglass_top,
+                                              color: iconColor),
+                                      onPressed: () {
                                         _sendMessage(_controller.text);
-                                    }
-                                  ),
+                                      }),
                                 ],
                               ),
                             ],
@@ -1482,7 +1514,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
   }
 
   List<Widget> _buildGroupedSessions(
-      List<ChatSession> sessions, Color textColor, Color borderColor) {
+      List<ChatSession> sessions, Color textColor, Color borderColor, bool isLight) {
     Map<String, List<ChatSession>> grouped = {
       'Today': [],
       'Yesterday': [],
@@ -1529,28 +1561,46 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
           ),
         );
         for (var session in value) {
+          bool isActive = session.id == widget.sessionId; // Check if active
+
           widgets.add(
             ListTile(
               title: Text(
                 session.title == 'Untitled' ? '(New Chat)' : session.title,
                 style: GoogleFonts.spaceMono(
-                    color: textColor,
-                    fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
+                  color: textColor,
+                  fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
+                  fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                ),
               ),
               subtitle: Text(
                 _formatDate(session.createdAt),
                 style: GoogleFonts.spaceMono(
-                    color: textColor.withOpacity(0.6),
-                    fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),
+                  color: textColor.withOpacity(0.6),
+                  fontSize: Theme.of(context).textTheme.bodySmall?.fontSize,
+                ),
               ),
+              leading: isActive
+                  ? Icon(
+                      Icons.check_circle,
+                      color: Colors.green,
+                      semanticLabel: 'Active Chat',
+                    )
+                  : null,
+              selected: isActive,
+              selectedTileColor:
+                  isLight ? Colors.blue.withOpacity(0.1) : Colors.blueGrey.withOpacity(0.3),
               onTap: () {
                 Navigator.pop(context); // close drawer
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => OllamaChatPage(sessionId: session.id),
-                  ),
-                );
+                // Only navigate if not already on the selected session
+                if (!isActive) {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => OllamaChatPage(sessionId: session.id),
+                    ),
+                  );
+                }
               },
             ),
           );
@@ -1735,101 +1785,4 @@ class ChatBubble extends StatelessWidget {
       ],
     );
   }
-}
-
-// --------------------------------------------------
-// Placeholder for InitialLoadup widget
-// --------------------------------------------------
-// class InitialLoadup extends StatelessWidget {
-//   final bool isEndpointSet;
-//   final bool isDarkMode;
-//   final String endpointURL;
-//   final VoidCallback onSettingsPressed;
-//   final Function(String) onPromptChanged;
-
-//   const InitialLoadup({
-//     Key? key,
-//     required this.isEndpointSet,
-//     required this.isDarkMode,
-//     required this.endpointURL,
-//     required this.onSettingsPressed,
-//     required this.onPromptChanged,
-//   }) : super(key: key);
-
-//   @override
-//   Widget build(BuildContext context) {
-//     if (isEndpointSet) {
-//       return Center(
-//         child: Text(
-//           'Ready to chat!',
-//           style: GoogleFonts.spaceMono(
-//             fontSize: 20,
-//             color: isDarkMode ? Colors.white : Colors.black,
-//           ),
-//         ),
-//       );
-//     } else {
-//       return Center(
-//         child: Column(
-//           mainAxisAlignment: MainAxisAlignment.center,
-//           children: [
-//             Text(
-//               'Endpoint not set or invalid.',
-//               style: GoogleFonts.spaceMono(
-//                 fontSize: 18,
-//                 color: isDarkMode ? Colors.white : Colors.black,
-//               ),
-//             ),
-//             SizedBox(height: 20),
-//             ElevatedButton(
-//               onPressed: onSettingsPressed,
-//               child: Text(
-//                 'Open Settings',
-//                 style: GoogleFonts.spaceMono(),
-//               ),
-//             ),
-//           ],
-//         ),
-//       );
-//     }
-//   }
-// }
-
-// --------------------------------------------------
-// Placeholder for ModelInformationPage widget
-// --------------------------------------------------
-class ModelInformationPage extends StatelessWidget {
-  final String url;
-  final String modelName;
-  final bool isDarkMode;
-
-  const ModelInformationPage({
-    Key? key,
-    required this.url,
-    required this.modelName,
-    required this.isDarkMode,
-  }) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    // Implement your model information page here
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          'Model Information',
-          style: GoogleFonts.spaceMono(),
-        ),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Text(
-          'Model Name: $modelName\nServer URL: $url',
-          style: GoogleFonts.spaceMono(
-            color: isDarkMode ? Colors.white : Colors.black,
-            fontSize: 16,
-          ),
-        ),
-      ),
-    );
-  }
-}
+} 
