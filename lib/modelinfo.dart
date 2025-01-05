@@ -31,7 +31,7 @@ class _ModelInformationPageState extends State<ModelInformationPage> {
 
   Future<void> fetchModelInfo() async {
     final Uri uri =
-        Uri.parse('${widget.url}/api/tags'); // Adjust endpoint as needed
+        Uri.parse('${widget.url}/tags'); // Adjust endpoint as needed
     print('Fetching model information from: $uri');
     try {
       final response = await http.get(
