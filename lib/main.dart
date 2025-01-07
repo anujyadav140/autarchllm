@@ -187,8 +187,7 @@ Future<void> deleteSession(String sessionId) async {
   await _saveSessionsToHive();
   notifyListeners();
 }
-  }
-
+}
 
 // --------------------------------------------------
 // 1) SettingsProvider & ThemeProvider
@@ -632,8 +631,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                 await box.put('defaultModel',
                                     settingsProvider.defaultModel);
                                 await box.put('systemPrompt', _systemPrompt);
-                                await box.put(
-                                    'serverURI', serverUriController.text);
+                                await box.put('serverURI', serverUriController.text);
                                 await box.put('contextWindow',
                                     settingsProvider.contextWindow);
 
@@ -763,10 +761,11 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                   value: 4,
                                   child: Text('4',
                                       style: GoogleFonts.spaceMono(
-                                          fontSize: Theme.of(context)
-                                              .textTheme
-                                              .bodySmall
-                                              ?.fontSize),),
+                                        fontSize: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.fontSize,
+                                      )),
                                 ),
                                  DropdownMenuItem<int>(
                                   value: 6,
@@ -958,7 +957,8 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                                               .textTheme
                                               .bodyMedium
                                               ?.fontSize,
-                                          fontWeight: FontWeight.bold),
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.red),
                                     ),
                                   ),
                                 ],
@@ -1014,12 +1014,48 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
     );
   }
 
+  void handleImageMessages(String model, String prompt, ChatSessionsProvider chatSessionsProvider, ChatMessage botMessage) async {
+    // ** Update the GenerateChatCompletionRequest **
+        final stream = client.generateCompletionStream(
+      request: GenerateCompletionRequest(
+        model: model,
+        stream: true,
+        prompt: prompt,
+        images: _pendingImages.map((image) => base64Encode(image!)).toList(),
+      ),
+    );
+
+    _pendingImages.clear(); // Clear pending images after sending
+    try {
+      await for (final res in stream) {
+        // Append partial tokens
+        final newText = botMessage.text + (res.response ?? '');
+        await chatSessionsProvider.updateLastBotMessage(
+          sessionId: widget.sessionId,
+          newText: newText,
+        );
+        _scrollToBottom(); // Scroll after updating bot message
+      }
+    } catch (e) {
+      await chatSessionsProvider.updateLastBotMessage(
+        sessionId: widget.sessionId,
+        newText: 'Error: Possibly no server endpoint or invalid response.',
+      );
+      debugPrint("Error during message streaming: $e");
+      _scrollToBottom(); // Scroll after error message
+    } finally {
+      await chatSessionsProvider.finalizeMessage(widget.sessionId);
+      setState(() {
+        _isLoading = false;
+        _pendingImages.clear(); // Clear pending images after sending
+      });
+    }
+  }
+
   // --------------------------------------------------
   // 3C) Streaming chat
   // --------------------------------------------------
   Future<void> _sendMessage(String messageText) async {
-    print("Server URI: ${client.baseUrl}");
-    print("User Message: $messageText");
     final chatSessionsProvider =
         Provider.of<ChatSessionsProvider>(context, listen: false);
     chatSessionsProvider.initialLoadUp = false;
@@ -1030,8 +1066,6 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       _isLoading = true;
     });
 
-    print("Server URI: ${client.baseUrl}");
-    print("User Message: $messageText");
     // Access the existing SettingsProvider
     final settingsProvider =
         Provider.of<SettingsProvider>(context, listen: false);
@@ -1104,25 +1138,38 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
       content: messageText.trim(),
     ));
 
-    // ** Update the GenerateChatCompletionRequest **
+    if (settingsProvider.defaultModel.contains("vision") || settingsProvider.defaultModel.contains("llava")) {
+      if (_pendingImages.map((image) => base64Encode(image!)).toList().isNotEmpty) {
+        handleImageMessages(settingsProvider.defaultModel, messageText, chatSessionsProvider, botMessage);
+      } else {
+        handleImageMessages(settingsProvider.defaultModel, messageText, chatSessionsProvider, botMessage);
+
+        var snackBar = SnackBar(
+        content: Text("You could've also added an image to this message!", style: GoogleFonts.spaceMono(fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),),);
+        ScaffoldMessenger.of(context).showSnackBar(snackBar);
+        _isLoading = false;
+      }
+    } else {
+      if (_pendingImages.map((image) => base64Encode(image!)).toList().isNotEmpty) {
+        var snackBar = SnackBar(
+        content: Text('You cant add an image to this model , switch to a vision model!', style: GoogleFonts.spaceMono(fontSize: Theme.of(context).textTheme.bodySmall?.fontSize),),);
+        ScaffoldMessenger.of(context).showSnackBar(snackBar);
+        _isLoading = false;
+        return;
+      }
+      // ** Update the GenerateChatCompletionRequest **
     final stream = client.generateChatCompletionStream(
       request: GenerateChatCompletionRequest(
         model: settingsProvider.defaultModel,
         stream: true,
-        keepAlive: 1,
         messages: requestMessages,
         // images: _pendingImages.map((image) => base64Encode(image!)).toList(),
       ),
     );
 
-    print("Using Model: ${settingsProvider.defaultModel}");
-    print("System Prompt: ${settingsProvider.systemPrompt}");
-    print("Server URI: ${client.baseUrl}");
-    print("User Message: $messageText");
     _pendingImages.clear(); // Clear pending images after sending
     try {
       await for (final res in stream) {
-        print(res);
         // Append partial tokens
         final newText = botMessage.text + (res.message.content ?? '');
         await chatSessionsProvider.updateLastBotMessage(
@@ -1145,6 +1192,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         _pendingImages.clear(); // Clear pending images after sending
       });
     }
+    }
     _controller.clear();
   }
 
@@ -1165,7 +1213,7 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
         Map<String, dynamic> jsonData = json.decode(response.body);
         List<dynamic> models = jsonData['models'];
         List<String> modelNames =
-            models.map((model) => model['name'] as String).toList();
+            models.map((model) => model['name'] as String).toSet().toList(); // Ensure unique model names
 
         setState(() {
           _modelOptions = modelNames;
@@ -1176,6 +1224,18 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                   .isEmpty) {
             Provider.of<SettingsProvider>(context, listen: false).defaultModel =
                 _modelOptions[0];
+          }
+          // Ensure the defaultModel is in the fetched model list
+          final settingsProvider =
+              Provider.of<SettingsProvider>(context, listen: false);
+          if (settingsProvider.defaultModel.isNotEmpty &&
+              !_modelOptions.contains(settingsProvider.defaultModel)) {
+            settingsProvider.defaultModel = _modelOptions.isNotEmpty
+                ? _modelOptions[0]
+                : '';
+            // Persist the updated defaultModel
+            final box = Hive.box('settings');
+            box.put('defaultModel', settingsProvider.defaultModel);
           }
         });
       } else {
@@ -1310,9 +1370,13 @@ class _OllamaChatPageState extends State<OllamaChatPage> {
                             Theme.of(context).textTheme.bodySmall?.fontSize),
                     dropdownColor: isLight ? Colors.white : Colors.grey[800],
                     iconEnabledColor: iconColor,
-                    value: settingsProvider.defaultModel.isNotEmpty
+                    // Ensure the value is valid
+                    value: (settingsProvider.defaultModel.isNotEmpty &&
+                            _modelOptions.contains(settingsProvider.defaultModel))
                         ? settingsProvider.defaultModel
-                        : (_modelOptions.isNotEmpty ? _modelOptions[0] : null),
+                        : (_modelOptions.isNotEmpty
+                            ? _modelOptions[0]
+                            : null),
                     hint: const Text('Select Model'),
                     items: _modelOptions.map((String modelName) {
                       return DropdownMenuItem<String>(
